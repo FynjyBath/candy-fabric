@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+{{template "head" .}}
+<title>Админка — вход</title>
+</head>
+<body>
+<main class="page narrow">
+<h1>Админка «Конфетной фабрики»</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/admin/login" class="login-form">
+	<input type="hidden" name="next" value="{{.Next}}">
+	<label>Логин <input name="login" required autofocus></label>
+	<label>Пароль <input name="password" type="password" required></label>
+	<button type="submit">Войти</button>
+</form>
+</main>
+</body>
+</html>

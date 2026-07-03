@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+{{template "head" .}}
+<title>Конфетная фабрика</title>
+</head>
+<body>
+<main class="page">
+<h1>Конфетная фабрика</h1>
+{{if .Games}}
+<table class="list">
+<tr><th>Игра</th><th>Статус</th><th>Старт</th></tr>
+{{range .Games}}
+<tr>
+	<td><a href="/g/{{.ID}}">{{.Title}}</a></td>
+	<td>{{statusRu .StatusNow}}</td>
+	<td>{{localTimePtr .StartAt}}</td>
+</tr>
+{{end}}
+</table>
+{{else}}
+<p>Нет активных игр.</p>
+{{end}}
+</main>
+</body>
+</html>

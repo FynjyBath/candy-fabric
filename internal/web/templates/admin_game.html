@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+{{template "head" .}}
+<title>Админка — {{.Game.Title}}</title>
+</head>
+<body>
+<main class="page">
+<p><a href="/admin/games">← Игры</a></p>
+<header class="board-header">
+	<h1>{{.Game.Title}} <span class="status-badge">{{statusRu .StatusNow}}</span></h1>
+	<div id="timer" class="timer">…</div>
+	<div id="offline" class="offline" hidden>нет связи</div>
+</header>
+
+<div id="poller-banner" class="error-box" {{if not .PollerErr}}hidden{{end}}>
+	Опрос информатикса не работает: <span id="poller-error">{{.PollerErr}}</span>
+	<span id="poller-err-at">{{if .PollerErr}}({{localTime .PollerErrAt}}){{end}}</span>
+</div>
+
+<p class="actions">
+	{{if eq .StatusNow "draft"}}
+	<a class="button" href="/admin/g/{{.Game.ID}}/edit">Редактировать конфигурацию</a>
+	<form method="post" action="/admin/g/{{.Game.ID}}/start" class="inline"
+		onsubmit="return confirm('Стартовать игру сейчас?')">
+		<input type="hidden" name="csrf" value="{{.CSRF}}">
+		<button type="submit">Старт сейчас</button>
+	</form>
+	{{end}}
+	{{if or (eq .StatusNow "running") (eq .StatusNow "finished")}}
+	<form method="post" action="/admin/g/{{.Game.ID}}/extend" class="inline">
+		<input type="hidden" name="csrf" value="{{.CSRF}}">
+		<button type="submit">+15 минут</button>
+	</form>
+	{{end}}
+	<form method="post" action="/admin/g/{{.Game.ID}}/archive" class="inline"
+		onsubmit="return confirm('Отправить игру в архив?')">
+		<input type="hidden" name="csrf" value="{{.CSRF}}">
+		<button type="submit" class="secondary">В архив</button>
+	</form>
+	<a class="button secondary" href="/g/{{.Game.ID}}" target="_blank">Публичное табло</a>
+</p>
+
+<section>
+	<h2>Живое табло</h2>
+	<p class="hint">Клик по ячейке — меню покупки задачи/теста.</p>
+	<div id="teams" class="teams"></div>
+	<h3>Запасы</h3>
+	<div id="histogram" class="histogram"></div>
+	<div class="two-col">
+		<div><h3>Параметры игры</h3><div id="params"></div></div>
+		<div><h3>Легенда</h3>
+			<div class="legend">
+				<span class="cell hidden">Не куплена</span>
+				<span class="cell bought">Куплена</span>
+				<span class="cell passed">Решена</span>
+			</div>
+		</div>
+	</div>
+</section>
+
+{{if .Warnings}}
+<section class="warn-box">
+	<h2>Предупреждения валидации</h2>
+	<ul>
+	{{range .Warnings}}
+		<li><a href="#event-{{.EventID}}">событие #{{.EventID}}</a>: {{.Text}}</li>
+	{{end}}
+	</ul>
+</section>
+{{end}}
+
+{{if .Anomalies}}
+<section class="warn-box">
+	<h2>Аномалии</h2>
+	<table class="list">
+	<tr><th>Время посылки</th><th>Команда</th><th>Задача</th><th>run_id</th><th>Причина</th><th></th></tr>
+	{{range .Anomalies}}
+	<tr>
+		<td>{{localTime .RunAt}}</td>
+		<td>{{.TeamName}}</td>
+		<td>{{.ChapterID}}</td>
+		<td>{{.RunID}}</td>
+		<td>{{.ReasonRu}}</td>
+		<td class="actions">
+			<button onclick="anomalyAction({{.ID}}, 'accept')">Принять</button>
+			<button class="secondary" onclick="anomalyAction({{.ID}}, 'reject')">Отклонить</button>
+		</td>
+	</tr>
+	{{end}}
+	</table>
+</section>
+{{end}}
+
+<section>
+	<h2>Журнал событий</h2>
+	<p>
+		Фильтр: команда
+		<select id="filter-team">
+			<option value="">— все —</option>
+			{{range .Teams}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+		</select>
+		тип
+		<select id="filter-type">
+			<option value="">— все —</option>
+			<option value="покупка задачи">покупка задачи</option>
+			<option value="покупка теста">покупка теста</option>
+			<option value="решение">решение</option>
+		</select>
+	</p>
+	<table class="list" id="events-table">
+	<tr><th>#</th><th>Время</th><th>Команда</th><th>Задача</th><th>Тип</th><th>Источник</th><th>run_id</th><th>Вкл</th><th>Комментарий</th><th></th></tr>
+	{{range .Events}}
+	<tr id="event-{{.ID}}" class="{{if not .Enabled}}disabled-event{{end}}"
+		data-team="{{.TeamName}}" data-type="{{.TypeRu}}">
+		<td>{{.ID}}</td>
+		<td>{{localTime .At}}</td>
+		<td>{{.TeamName}}</td>
+		<td>{{.ChapterID}}</td>
+		<td>{{.TypeRu}}</td>
+		<td>{{.Source}}</td>
+		<td>{{if .RunID}}{{.RunID}}{{end}}</td>
+		<td>{{if .Enabled}}✓{{else}}✗{{end}}</td>
+		<td>{{.Comment}}</td>
+		<td class="actions">
+			<details>
+				<summary>Изменить</summary>
+				<form onsubmit="return submitEventForm(this, '/admin/g/{{$.Game.ID}}/event/{{.ID}}/update')">
+					<label>Время <input name="at" type="datetime-local" step="1" value="{{inputTime .At}}" required></label>
+					{{if eq .Source "manual"}}
+					<label>Команда <select name="team_id">
+						{{$teamID := .TeamID}}
+						{{range $.Teams}}<option value="{{.ID}}" {{if eq .ID $teamID}}selected{{end}}>{{.Name}}</option>{{end}}
+					</select></label>
+					<label>Задача <select name="task_id">
+						{{$taskID := .TaskID}}
+						{{range $.Tasks}}<option value="{{.ID}}" {{if and $taskID (eq .ID (deref $taskID))}}selected{{end}}>{{.ChapterID}} (уровень {{.Level}})</option>{{end}}
+					</select></label>
+					<label>Тип <select name="type">
+						{{$type := .Type}}
+						<option value="buy_task" {{if eq $type "buy_task"}}selected{{end}}>покупка задачи</option>
+						<option value="buy_test" {{if eq $type "buy_test"}}selected{{end}}>покупка теста</option>
+						<option value="solve" {{if eq $type "solve"}}selected{{end}}>решение</option>
+					</select></label>
+					<label>Комментарий <input name="comment" value="{{.Comment}}"></label>
+					{{end}}
+					<button type="submit">Сохранить</button>
+				</form>
+			</details>
+			{{if eq .Source "manual"}}
+			<button class="secondary" onclick="eventAction({{.ID}}, 'delete', 'Удалить событие #{{.ID}}?')">Удалить</button>
+			{{else}}
+			<button class="secondary" onclick="eventAction({{.ID}}, 'toggle')">{{if .Enabled}}Отключить{{else}}Включить{{end}}</button>
+			{{end}}
+		</td>
+	</tr>
+	{{end}}
+	</table>
+
+	<details id="add-event">
+		<summary class="button">Добавить событие</summary>
+		<form onsubmit="return submitEventForm(this, '/admin/g/{{.Game.ID}}/event')">
+			<label>Время <input name="at" type="datetime-local" step="1" required></label>
+			<label>Команда <select name="team_id">
+				{{range .Teams}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+			</select></label>
+			<label>Задача <select name="task_id">
+				{{range .Tasks}}<option value="{{.ID}}">{{.ChapterID}} (уровень {{.Level}})</option>{{end}}
+			</select></label>
+			<label>Тип <select name="type">
+				<option value="buy_task">покупка задачи</option>
+				<option value="buy_test">покупка теста</option>
+				<option value="solve">решение</option>
+			</select></label>
+			<label>Комментарий <input name="comment"></label>
+			<button type="submit">Добавить</button>
+		</form>
+	</details>
+</section>
+
+<section>
+	<h2>Команды</h2>
+	<table class="list">
+	<tr><th>Имя</th><th>user_id</th><th>Логин</th><th>Пароль</th><th>Страница</th><th>Сменить пароль</th></tr>
+	{{range .Teams}}
+	<tr>
+		<td>{{.Name}}</td>
+		<td>{{.InformaticsUserID}}</td>
+		<td>{{.Login}}</td>
+		<td><code>{{.Password}}</code></td>
+		<td><a href="/g/{{.GameID}}/team/{{.ID}}" target="_blank">/g/{{.GameID}}/team/{{.ID}}</a></td>
+		<td>
+			<form method="post" action="/admin/g/{{$.Game.ID}}/team/{{.ID}}/password" class="inline">
+				<input type="hidden" name="csrf" value="{{$.CSRF}}">
+				<input name="password" placeholder="новый пароль" required>
+				<button type="submit" class="secondary">OK</button>
+			</form>
+		</td>
+	</tr>
+	{{end}}
+	</table>
+</section>
+
+</main>
+<script src="/static/board.js"></script>
+<script src="/static/admin.js"></script>
+<script>
+window.ADMIN = { gameId: {{.Game.ID}}, csrf: {{.CSRF}} };
+initBoard({
+	stateUrl: {{.StateURL}},
+	mode: "admin",
+	refreshSec: {{.RefreshSec}},
+	teamId: 0
+});
+initEventFilters();
+</script>
+</body>
+</html>

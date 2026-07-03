@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+{{template "head" .}}
+<title>{{.Game.Title}}{{if .Team}} — {{.Team.Name}}{{end}}</title>
+</head>
+<body>
+<main class="page board-page">
+<header class="board-header">
+	<h1>{{.Game.Title}}{{if .Team}} <span class="team-badge">{{.Team.Name}}</span>{{end}}</h1>
+	<div id="timer" class="timer">…</div>
+	<div id="offline" class="offline" hidden>нет связи</div>
+</header>
+
+{{if .Team}}
+<section id="own-table-box">
+	<h2>Ваши задачи</h2>
+	<div id="own-table"></div>
+	<p class="hint">Ссылки открывают условия на информатиксе. Цвет ячейки — состояние задачи.</p>
+</section>
+{{end}}
+
+<section>
+	<div id="teams" class="teams"></div>
+</section>
+
+<section>
+	<h2>Запасы</h2>
+	<div id="histogram" class="histogram"></div>
+</section>
+
+<section class="two-col">
+	<div>
+		<h2>Параметры игры</h2>
+		<div id="params"></div>
+	</div>
+	<div>
+		<h2>Легенда</h2>
+		<div class="legend">
+			<span class="cell hidden">Не куплена</span>
+			<span class="cell bought">Куплена</span>
+			<span class="cell passed">Решена</span>
+		</div>
+	</div>
+</section>
+</main>
+<script src="/static/board.js"></script>
+<script>
+initBoard({
+	stateUrl: {{.StateURL}},
+	mode: {{.Mode}},
+	refreshSec: {{.RefreshSec}},
+	teamId: {{if .Team}}{{.Team.ID}}{{else}}0{{end}}
+});
+</script>
+</body>
+</html>

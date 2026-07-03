@@ -1,0 +1,106 @@
+/* Конфетная фабрика — простая вёрстка без брендинга (раздел 8 ТЗ). */
+* { box-sizing: border-box; }
+body {
+	margin: 0;
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	background: #fafafa;
+	color: #222;
+}
+.page { max-width: 1400px; margin: 0 auto; padding: 16px; }
+.page.narrow { max-width: 480px; }
+h1 { font-size: 1.6rem; margin: 8px 0; }
+h2 { font-size: 1.2rem; margin: 16px 0 8px; }
+a { color: #0057b8; }
+code { background: #eee; padding: 1px 4px; border-radius: 3px; }
+
+.board-header { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.timer { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.offline { background: #c0392b; color: #fff; padding: 4px 10px; border-radius: 4px; }
+.team-badge, .status-badge { font-size: 1rem; background: #e8e8e8; padding: 2px 10px; border-radius: 10px; vertical-align: middle; }
+
+.error { color: #c0392b; }
+.error-box { background: #fdecea; border: 1px solid #c0392b; padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
+.warn-box { background: #fff8e1; border: 1px solid #e0a800; padding: 8px 12px; border-radius: 4px; margin: 12px 0; }
+.hint { color: #666; font-size: 0.9rem; }
+
+table.list { border-collapse: collapse; margin: 8px 0; width: auto; }
+table.list th, table.list td { border: 1px solid #ccc; padding: 4px 10px; text-align: left; vertical-align: top; }
+table.list th { background: #f0f0f0; }
+tr.disabled-event td { text-decoration: line-through; color: #999; }
+tr.disabled-event td.actions { text-decoration: none; }
+
+.login-form label { display: block; margin: 10px 0; }
+.login-form input { display: block; width: 100%; padding: 6px; margin-top: 4px; }
+fieldset { margin: 12px 0; border: 1px solid #ccc; border-radius: 4px; }
+fieldset label { display: inline-block; margin: 6px 12px 6px 0; }
+fieldset input, fieldset textarea, fieldset select { padding: 4px; }
+button, .button {
+	display: inline-block; padding: 6px 14px; border: none; border-radius: 4px;
+	background: #0057b8; color: #fff; font-size: 0.95rem; cursor: pointer; text-decoration: none;
+}
+button.secondary, .button.secondary { background: #777; }
+form.inline { display: inline; }
+.actions form { margin-right: 6px; }
+
+/* Колонки команд */
+.teams { display: flex; gap: 20px; flex-wrap: wrap; margin: 12px 0; }
+.team-col { min-width: 240px; }
+.team-col h3 { margin: 4px 0; }
+.team-col .stats { margin: 4px 0 8px; font-size: 1.05rem; }
+.team-col .stats b { font-variant-numeric: tabular-nums; }
+
+/* Сетка задач */
+.grid { display: grid; gap: 4px; }
+.cell {
+	position: relative; display: flex; align-items: center; justify-content: center;
+	min-width: 44px; min-height: 40px; padding: 2px 6px;
+	border-radius: 4px; font-weight: 600; border: 1px solid rgba(0,0,0,0.15);
+}
+.cell.hidden { background: #d7d7d7; color: #555; }
+.cell.bought { background: #f7d84b; color: #5b4a00; }
+.cell.passed { background: #6fce6f; color: #0d4d0d; }
+.cell a { color: inherit; text-decoration: underline; }
+.cell .tests-badge {
+	position: absolute; top: -7px; right: -7px;
+	background: #c0392b; color: #fff; border-radius: 50%;
+	font-size: 0.7rem; min-width: 16px; height: 16px; line-height: 16px; text-align: center;
+}
+.cell.clickable { cursor: pointer; }
+.legend .cell { display: inline-flex; margin-right: 8px; min-height: 28px; }
+
+/* Индикатор скорости: «бегущая» полоска, период обратно пропорционален скорости */
+.speed-stripe {
+	height: 8px; border-radius: 4px; overflow: hidden; margin: 4px 0;
+	background: repeating-linear-gradient(90deg, #0057b8 0 16px, #bcd6f5 16px 32px);
+	background-size: 32px 100%;
+	animation: stripe-run 1s linear infinite;
+}
+@keyframes stripe-run { from { background-position-x: 0; } to { background-position-x: 32px; } }
+
+/* Гистограмма запасов */
+.histogram .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.histogram .bar-label { width: 180px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.histogram .bar-track { flex: 1; background: #eee; border-radius: 4px; height: 26px; }
+.histogram .bar {
+	height: 100%; background: #0057b8; border-radius: 4px;
+	color: #fff; font-size: 0.85rem; line-height: 26px; padding-left: 8px;
+	min-width: 2px; white-space: nowrap; transition: width 0.5s;
+}
+
+.two-col { display: flex; gap: 40px; flex-wrap: wrap; }
+
+/* Меню ячейки в админке */
+.cell-menu {
+	position: absolute; z-index: 10; background: #fff; border: 1px solid #999;
+	border-radius: 6px; padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+	display: flex; flex-direction: column; gap: 6px; min-width: 220px;
+}
+.cell-menu button:disabled { background: #ccc; cursor: not-allowed; }
+
+details form { margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
+details form label { font-size: 0.9rem; }
+
+@media (max-width: 700px) {
+	.timer { font-size: 1.5rem; }
+	.histogram .bar-label { width: 100px; }
+}

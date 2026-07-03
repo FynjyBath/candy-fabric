@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+{{template "head" .}}
+<title>{{if .IsNew}}Новая игра{{else}}Редактирование игры{{end}}</title>
+</head>
+<body>
+<main class="page">
+<p><a href="/admin/games">← Игры</a></p>
+<h1>{{if .IsNew}}Новая игра{{else}}Редактирование: {{.Form.Title}}{{end}}</h1>
+
+{{if .Form.Errors}}
+<div class="error-box">
+	<b>Ошибки формы:</b>
+	<ul>{{range .Form.Errors}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}
+
+<form method="post" id="game-form"
+	action="{{if .IsNew}}/admin/games/new{{else}}/admin/g/{{.Game.ID}}/edit{{end}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+
+<fieldset>
+<legend>Основное</legend>
+<label>Название <input name="title" value="{{.Form.Title}}" required size="40"></label>
+<label>Уровней сложности n (2–6)
+	<input name="n" id="n-input" type="number" min="2" max="6" value="{{.Form.N}}" required>
+</label>
+<label>Стартовые запасы <input name="start_amount" type="number" min="0" value="{{.Form.StartAmount}}" required></label>
+<label>Стартовая скорость <input name="start_speed" type="number" min="0" value="{{.Form.StartSpeed}}" required></label>
+<label>Длительность, минут <input name="duration_min" type="number" min="1" step="any" value="{{.Form.DurationMin}}" required></label>
+<label>Плановое время старта (опционально)
+	<input name="start_at" type="datetime-local" value="{{.Form.StartAt}}">
+</label>
+</fieldset>
+
+<fieldset>
+<legend>Параметры уровней</legend>
+<table class="list" id="levels-table">
+<tr><th>Уровень</th><th>Цена задачи</th><th>Цена теста</th><th>Нагрузка</th><th>Бонус запасы</th><th>Бонус скорость</th></tr>
+{{range .Form.Levels}}
+<tr class="level-row" data-level="{{.Level}}">
+	<td>{{.Level}}</td>
+	<td><input name="task_cost_{{.Level}}" type="number" min="0" value="{{.TaskCost}}"></td>
+	<td><input name="test_cost_{{.Level}}" type="number" min="0" value="{{.TestCost}}"></td>
+	<td><input name="load_{{.Level}}" type="number" min="0" value="{{.Load}}"></td>
+	<td><input name="amount_bonus_{{.Level}}" type="number" min="0" value="{{.AmountBonus}}"></td>
+	<td><input name="speed_bonus_{{.Level}}" type="number" min="0" value="{{.SpeedBonus}}"></td>
+</tr>
+{{end}}
+</table>
+</fieldset>
+
+<fieldset>
+<legend>Задачи (по n ссылок informatics на уровень, по одной в строке)</legend>
+<div id="tasks-box">
+{{range $i, $row := .Form.TaskRows}}
+<label class="task-row" data-level="{{addOne $i}}">Уровень {{addOne $i}}
+	<textarea name="tasks_{{addOne $i}}" rows="4" cols="90"
+		placeholder="https://informatics.msk.ru/mod/statements/view.php?chapterid=...">{{$row}}</textarea>
+</label>
+{{end}}
+</div>
+</fieldset>
+
+<fieldset>
+<legend>Команды (минимум 2)</legend>
+<table class="list" id="teams-table">
+<tr><th>Имя</th><th>informatics user_id</th><th>Логин</th><th>Пароль</th><th></th></tr>
+{{range .Form.Teams}}
+<tr>
+	<td><input name="team_name" value="{{.Name}}"></td>
+	<td><input name="team_user_id" type="number" min="1" value="{{.UserID}}"></td>
+	<td><input name="team_login" value="{{.Login}}"></td>
+	<td><input name="team_password" value="{{.Password}}"></td>
+	<td><button type="button" class="secondary" onclick="this.closest('tr').remove()">×</button></td>
+</tr>
+{{end}}
+</table>
+<button type="button" class="secondary" id="add-team">Добавить команду</button>
+</fieldset>
+
+<p><button type="submit">Сохранить</button></p>
+</form>
+
+<script src="/static/game_edit.js"></script>
+</main>
+</body>
+</html>

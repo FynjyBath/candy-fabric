@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+{{template "head" .}}
+<title>Админка — игры</title>
+</head>
+<body>
+<main class="page">
+<header class="board-header">
+	<h1>Игры</h1>
+	<form method="post" action="/admin/logout" class="inline">
+		<input type="hidden" name="csrf" value="{{.CSRF}}">
+		<button type="submit" class="secondary">Выйти</button>
+	</form>
+</header>
+<p><a class="button" href="/admin/games/new">Создать игру</a></p>
+<table class="list">
+<tr><th>Название</th><th>Статус</th><th>n</th><th>Команд</th><th>Старт</th><th>Осталось</th><th></th></tr>
+{{range .Games}}
+<tr>
+	<td>{{.Title}}</td>
+	<td>{{statusRu .StatusNow}}</td>
+	<td>{{.N}}</td>
+	<td>{{.TeamCount}}</td>
+	<td>{{localTimePtr .StartAt}}</td>
+	<td>{{.Remaining}}</td>
+	<td class="actions">
+		<a class="button" href="/admin/g/{{.ID}}">Открыть</a>
+		{{if ne .StatusNow "archived"}}
+		<form method="post" action="/admin/g/{{.ID}}/archive" class="inline"
+			onsubmit="return confirm('Отправить игру в архив?')">
+			<input type="hidden" name="csrf" value="{{$.CSRF}}">
+			<button type="submit" class="secondary">В архив</button>
+		</form>
+		{{end}}
+	</td>
+</tr>
+{{end}}
+</table>
+</main>
+</body>
+</html>

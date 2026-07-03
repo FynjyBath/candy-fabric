@@ -1,0 +1,18 @@
+[Unit]
+Description=Candy Factory — онлайн-монитор турнира «Конфетная фабрика»
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=candy
+Group=candy
+WorkingDirectory=/opt/candy-factory
+ExecStart=/opt/candy-factory/candy-factory -listen :8080 -data-dir /opt/candy-factory/data
+Restart=always
+RestartSec=3
+# Все времена хранятся в UTC; отображение на страницах — в поясе сервера.
+Environment=TZ=Europe/Moscow
+
+[Install]
+WantedBy=multi-user.target
