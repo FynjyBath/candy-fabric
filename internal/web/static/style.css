@@ -1,110 +1,221 @@
-/* Конфетная фабрика — простая вёрстка без брендинга (раздел 8 ТЗ). */
+/* Конфетная фабрика — карамельная тема. Вся графика — inline SVG (data URI),
+   без внешних ресурсов; анимации — чистый CSS. */
+
+:root {
+	--bg: #fdf6ec;          /* крем */
+	--ink: #4a2c17;         /* шоколад */
+	--ink-soft: #7a5b41;    /* какао */
+	--accent: #d94f70;      /* малина */
+	--accent-dark: #b23a58;
+	--caramel: #f0b64b;
+	--caramel-dark: #8a6410;
+	--mint: #79cf8d;
+	--mint-dark: #1d6b33;
+	--wrap-grey: #d8d3cc;
+	--paper: #fffdf8;       /* карточки/ячейки таблиц */
+	--line: #e8d7bd;        /* рамки */
+}
+
 * { box-sizing: border-box; }
 body {
 	margin: 0;
 	font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-	background: #fafafa;
-	color: #222;
+	color: var(--ink);
+	background-color: var(--bg);
+	/* едва заметные контурные конфеты по всему фону */
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cg fill='none' stroke='%23f3e7d2' stroke-width='2'%3E%3Cg transform='translate(34,40) rotate(-18)'%3E%3Cellipse rx='11' ry='8'/%3E%3Cpath d='M-11 0l-9 -6v12z'/%3E%3Cpath d='M11 0l9 -6v12z'/%3E%3C/g%3E%3Cg transform='translate(118,120) rotate(22)'%3E%3Cellipse rx='11' ry='8'/%3E%3Cpath d='M-11 0l-9 -6v12z'/%3E%3Cpath d='M11 0l9 -6v12z'/%3E%3C/g%3E%3Ccircle cx='124' cy='34' r='9'/%3E%3Cline x1='124' y1='43' x2='124' y2='62'/%3E%3C/g%3E%3C/svg%3E");
 }
 .page { max-width: 1400px; margin: 0 auto; padding: 16px; }
 .page.narrow { max-width: 480px; }
-h1 { font-size: 1.6rem; margin: 8px 0; }
-h2 { font-size: 1.2rem; margin: 16px 0 8px; }
-a { color: #0057b8; }
-code { background: #eee; padding: 1px 4px; border-radius: 3px; }
+
+h1, h2, h3 { color: var(--ink); }
+h1 { font-size: 1.7rem; margin: 8px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* леденец у главного заголовка */
+h1::before {
+	content: "";
+	flex: none;
+	width: 30px; height: 30px;
+	background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 26' width='24' height='26'%3E%3Cline x1='12' y1='12' x2='12' y2='25' stroke='%23b98a5a' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='9' r='8' fill='%23d94f70'/%3E%3Cpath d='M12 4a5 5 0 1 1 -5 5a3.5 3.5 0 1 0 3.5 -3.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+/* карамельное полосатое подчёркивание */
+h2 {
+	font-size: 1.2rem; margin: 18px 0 8px; padding-bottom: 5px;
+	display: table;
+	border-bottom: 4px solid transparent;
+	border-image: repeating-linear-gradient(120deg, var(--accent) 0 8px, #fff 8px 12px, var(--caramel) 12px 20px, #fff 20px 24px) 1;
+}
+a { color: var(--accent-dark); }
+code { background: #f3e6d2; padding: 1px 5px; border-radius: 6px; }
 
 .board-header { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
-.timer { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.offline { background: #c0392b; color: #fff; padding: 4px 10px; border-radius: 4px; }
-.team-badge, .status-badge { font-size: 1rem; background: #e8e8e8; padding: 2px 10px; border-radius: 10px; vertical-align: middle; }
+.timer {
+	font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums;
+	color: var(--ink);
+	background: var(--paper);
+	border: 2px solid var(--line);
+	border-radius: 14px;
+	padding: 2px 18px;
+	box-shadow: 0 2px 0 var(--line);
+}
+.offline { background: #c0392b; color: #fff; padding: 4px 12px; border-radius: 999px; }
+.team-badge, .status-badge {
+	font-size: 1rem; font-weight: 600;
+	background: var(--caramel); color: var(--ink);
+	padding: 2px 14px; border-radius: 999px;
+}
 
 .error { color: #c0392b; }
-.error-box { background: #fdecea; border: 1px solid #c0392b; padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
-.warn-box { background: #fff8e1; border: 1px solid #e0a800; padding: 8px 12px; border-radius: 4px; margin: 12px 0; }
-.hint { color: #666; font-size: 0.9rem; }
+.error-box { background: #fdecea; border: 1px solid #d98a80; padding: 8px 12px; border-radius: 10px; margin: 8px 0; }
+.warn-box { background: #fff6dd; border: 1px solid #e5c67a; padding: 8px 12px; border-radius: 10px; margin: 12px 0; }
+.hint { color: var(--ink-soft); font-size: 0.9rem; }
 
-table.list { border-collapse: collapse; margin: 8px 0; width: auto; }
-table.list th, table.list td { border: 1px solid #ccc; padding: 4px 10px; text-align: left; vertical-align: top; }
-table.list th { background: #f0f0f0; }
-tr.disabled-event td { text-decoration: line-through; color: #999; }
+table.list { border-collapse: collapse; margin: 8px 0; width: auto; background: var(--paper); }
+table.list th, table.list td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; vertical-align: top; }
+table.list th { background: #f6e8d3; }
+tr.disabled-event td { text-decoration: line-through; color: #a08c76; }
 tr.disabled-event td.actions { text-decoration: none; }
 
 .login-form label { display: block; margin: 10px 0; }
-.login-form input { display: block; width: 100%; padding: 6px; margin-top: 4px; }
-fieldset { margin: 12px 0; border: 1px solid #ccc; border-radius: 4px; }
+.login-form input { display: block; width: 100%; padding: 7px; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+fieldset { margin: 12px 0; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,253,248,0.7); }
 fieldset label { display: inline-block; margin: 6px 12px 6px 0; }
-fieldset input, fieldset textarea, fieldset select { padding: 4px; }
+fieldset input, fieldset textarea, fieldset select { padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+
 button, .button {
-	display: inline-block; padding: 6px 14px; border: none; border-radius: 4px;
-	background: #0057b8; color: #fff; font-size: 0.95rem; cursor: pointer; text-decoration: none;
+	display: inline-block; padding: 6px 16px; border: none; border-radius: 999px;
+	background: var(--accent); color: #fff; font-size: 0.95rem; cursor: pointer; text-decoration: none;
+	box-shadow: 0 2px 0 var(--accent-dark);
 }
-button.secondary, .button.secondary { background: #777; }
+button:active, .button:active { transform: translateY(1px); box-shadow: none; }
+button.secondary, .button.secondary { background: #a58a70; box-shadow: 0 2px 0 #7a5b41; }
 form.inline { display: inline; }
 .actions form { margin-right: 6px; }
 
 /* Колонки команд */
-.teams { display: flex; gap: 20px; flex-wrap: wrap; margin: 12px 0; }
-.team-col { min-width: 240px; }
+.teams { display: flex; gap: 24px; flex-wrap: wrap; margin: 12px 0; }
+.team-col {
+	min-width: 250px;
+	background: var(--paper);
+	border: 2px solid var(--line);
+	border-radius: 14px;
+	padding: 10px 14px 14px;
+	box-shadow: 0 2px 0 var(--line);
+}
 .team-col h3 { margin: 4px 0; }
 .team-col .stats { margin: 4px 0 8px; font-size: 1.05rem; }
 .team-col .stats b { font-variant-numeric: tabular-nums; }
 
-/* Сетка задач */
-.grid { display: grid; gap: 4px; }
+/* Сетка задач: ячейки — конфеты в фантиках */
+.grid { display: grid; gap: 8px 18px; padding: 0 10px; }
 .cell {
-	position: relative; display: flex; align-items: center; justify-content: center;
-	min-width: 44px; min-height: 40px; padding: 2px 6px;
-	border-radius: 4px; font-weight: 600; border: 1px solid rgba(0,0,0,0.15);
+	--candy: var(--wrap-grey);
+	--candy-hi: #e7e2da;
+	position: relative;
+	display: flex; align-items: center; justify-content: center;
+	min-width: 46px; min-height: 40px; padding: 2px 8px;
+	font-weight: 700;
+	color: #6d6459;
+	background: radial-gradient(ellipse at 35% 30%, var(--candy-hi), var(--candy) 70%);
+	border-radius: 50% / 46%;
+	box-shadow: inset 0 -3px 4px rgba(0,0,0,0.10);
 }
-.cell.hidden { background: #d7d7d7; color: #555; }
-.cell.bought { background: #f7d84b; color: #5b4a00; }
-.cell.passed { background: #6fce6f; color: #0d4d0d; }
+/* хвостики фантика */
+.cell::before, .cell::after {
+	content: ""; position: absolute; top: 50%; width: 12px; height: 20px;
+	transform: translateY(-50%);
+	background: var(--candy);
+	filter: brightness(0.95);
+}
+.cell::before { left: -11px; clip-path: polygon(100% 50%, 0 0, 30% 50%, 0 100%); }
+.cell::after { right: -11px; clip-path: polygon(0 50%, 100% 0, 70% 50%, 100% 100%); }
+.cell.hidden { --candy: var(--wrap-grey); --candy-hi: #e9e4dc; }
+.cell.bought { --candy: var(--caramel); --candy-hi: #ffdd8f; color: var(--caramel-dark); }
+.cell.passed { --candy: var(--mint); --candy-hi: #b2ecc0; color: var(--mint-dark); }
 .cell a { color: inherit; text-decoration: underline; }
 .cell .tests-badge {
-	position: absolute; top: -7px; right: -7px;
-	background: #c0392b; color: #fff; border-radius: 50%;
-	font-size: 0.7rem; min-width: 16px; height: 16px; line-height: 16px; text-align: center;
+	position: absolute; top: -8px; right: -6px; z-index: 1;
+	background: var(--accent); color: #fff; border-radius: 50%;
+	font-size: 0.7rem; min-width: 17px; height: 17px; line-height: 17px; text-align: center;
+	box-shadow: 0 1px 0 var(--accent-dark);
+}
+.cell .solved-badge {
+	position: absolute; top: -8px; right: -6px; z-index: 1;
+	background: var(--mint-dark); color: #fff; border-radius: 50%;
+	font-size: 0.7rem; width: 17px; height: 17px; line-height: 17px; text-align: center;
 }
 .cell.clickable { cursor: pointer; }
-.legend .cell { display: inline-flex; margin-right: 8px; min-height: 28px; }
+.legend .cell { display: inline-flex; margin: 0 16px 0 12px; min-height: 30px; }
 
-/* Индикатор скорости: «бегущая» полоска, период обратно пропорционален скорости */
+/* Конвейер фабрики: лента с конфетами, скорость = скорость производства */
 .speed-stripe {
-	height: 8px; border-radius: 4px; overflow: hidden; margin: 4px 0;
-	background: repeating-linear-gradient(90deg, #0057b8 0 16px, #bcd6f5 16px 32px);
-	background-size: 32px 100%;
-	animation: stripe-run 1s linear infinite;
+	height: 16px; border-radius: 8px; overflow: hidden; margin: 4px 0;
+	background:
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='16'%3E%3Cg transform='translate(18,8)'%3E%3Cpath d='M-6 0l-4 -3v6z' fill='%23f0b64b'/%3E%3Cpath d='M6 0l4 -3v6z' fill='%23f0b64b'/%3E%3Cellipse rx='6' ry='4.5' fill='%23f0b64b'/%3E%3Cellipse rx='2.2' ry='4.5' fill='%23fff' fill-opacity='0.45'/%3E%3C/g%3E%3Cg transform='translate(54,8)'%3E%3Cpath d='M-6 0l-4 -3v6z' fill='%23e87d9a'/%3E%3Cpath d='M6 0l4 -3v6z' fill='%23e87d9a'/%3E%3Cellipse rx='6' ry='4.5' fill='%23e87d9a'/%3E%3Cellipse rx='2.2' ry='4.5' fill='%23fff' fill-opacity='0.45'/%3E%3C/g%3E%3C/svg%3E") repeat-x 0 0 / 72px 16px,
+		linear-gradient(#6b4a2f, #503620);
+	animation: belt-run 1s linear infinite;
+	box-shadow: inset 0 2px 3px rgba(0,0,0,0.35);
 }
-@keyframes stripe-run { from { background-position-x: 0; } to { background-position-x: 32px; } }
+@keyframes belt-run { to { background-position: 72px 0, 0 0; } }
 
 /* Гистограмма запасов */
-.histogram .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.histogram .bar-label { width: 180px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.histogram .bar-track { flex: 1; background: #eee; border-radius: 4px; height: 26px; }
+.histogram .bar-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+.histogram .bar-label { width: 180px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.histogram .bar-track { flex: 1; background: #f1e3cb; border-radius: 999px; height: 28px; border: 1px solid var(--line); }
 .histogram .bar {
-	height: 100%; background: #0057b8; border-radius: 4px;
-	color: #fff; font-size: 0.85rem; line-height: 26px; padding-left: 8px;
-	min-width: 2px; white-space: nowrap; transition: width 0.5s;
+	height: 100%;
+	background: linear-gradient(180deg, #e87d9a, var(--accent) 55%, var(--accent-dark));
+	border-radius: 999px;
+	color: #fff; font-size: 0.85rem; line-height: 26px; padding-left: 12px;
+	min-width: 4px; white-space: nowrap; transition: width 0.5s;
 }
 
 .two-col { display: flex; gap: 40px; flex-wrap: wrap; }
 
 /* Меню ячейки в админке */
 .cell-menu {
-	position: absolute; z-index: 10; background: #fff; border: 1px solid #999;
-	border-radius: 6px; padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+	position: absolute; z-index: 10; background: var(--paper); border: 2px solid var(--line);
+	border-radius: 12px; padding: 10px; box-shadow: 0 6px 16px rgba(74,44,23,0.25);
 	display: flex; flex-direction: column; gap: 6px; min-width: 220px;
 }
-.cell-menu button:disabled { background: #ccc; cursor: not-allowed; }
+.cell-menu button:disabled { background: #cfc4b5; box-shadow: none; cursor: not-allowed; }
 
 /* Кнопка покупки в таблице команды */
-.buy-btn { display: block; margin: 4px auto 0; padding: 3px 10px; font-size: 0.85rem; }
-.buy-btn:disabled { background: #ccc; cursor: wait; }
+.buy-btn { display: block; margin: 8px auto 0; padding: 3px 12px; font-size: 0.85rem; }
+.buy-btn:disabled { background: #cfc4b5; box-shadow: none; cursor: wait; }
 
 details form { margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
 details form label { font-size: 0.9rem; }
+details summary { cursor: pointer; }
+
+/* Конфетти при решении задачи */
+.candy-pop {
+	position: absolute; z-index: 50; pointer-events: none;
+	font-size: 19px; line-height: 1;
+	animation: candy-pop 1.2s ease-out forwards;
+}
+@keyframes candy-pop {
+	from { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+	70%  { opacity: 1; }
+	to   { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)); opacity: 0; }
+}
+
+/* Финальный дождь из конфет */
+.candy-rain {
+	position: fixed; top: -40px; z-index: 60; pointer-events: none;
+	font-size: 26px; line-height: 1;
+	animation: candy-fall linear forwards;
+}
+@keyframes candy-fall {
+	to { transform: translateY(108vh) rotate(var(--rot, 360deg)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.speed-stripe { animation: none; }
+	.candy-pop, .candy-rain { display: none; }
+}
 
 @media (max-width: 700px) {
 	.timer { font-size: 1.5rem; }
 	.histogram .bar-label { width: 100px; }
+	.teams { gap: 16px; }
 }

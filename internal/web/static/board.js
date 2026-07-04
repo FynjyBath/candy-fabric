@@ -56,8 +56,59 @@ function initBoard(opts) {
 			b.textContent = cell.tests;
 			div.appendChild(b);
 		}
+		if (cell.state === "passed") {
+			const b = document.createElement("span");
+			b.className = "solved-badge";
+			b.textContent = "✓";
+			div.appendChild(b);
+		}
 		return div;
 	}
+
+	// ---------- Конфетная анимация ----------
+	const CANDY_GLYPHS = ["🍬", "🍭", "🍫", "🧁"];
+	const reducedMotion = window.matchMedia &&
+		window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	// Разлёт конфет из точки (координаты страницы) — при решении задачи.
+	function candyBurst(x, y) {
+		if (reducedMotion) return;
+		for (let i = 0; i < 12; i++) {
+			const p = document.createElement("span");
+			p.className = "candy-pop";
+			p.textContent = CANDY_GLYPHS[i % CANDY_GLYPHS.length];
+			const ang = Math.random() * 2 * Math.PI;
+			const dist = 60 + Math.random() * 90;
+			p.style.left = x + "px";
+			p.style.top = y + "px";
+			p.style.setProperty("--dx", Math.cos(ang) * dist + "px");
+			p.style.setProperty("--dy", (Math.sin(ang) * dist - 50) + "px");
+			p.style.setProperty("--rot", (Math.random() * 720 - 360) + "deg");
+			document.body.appendChild(p);
+			setTimeout(() => p.remove(), 1300);
+		}
+	}
+
+	// Финальный дождь из конфет — один раз при завершении игры.
+	function candyRain() {
+		if (reducedMotion) return;
+		for (let i = 0; i < 40; i++) {
+			const p = document.createElement("span");
+			p.className = "candy-rain";
+			p.textContent = CANDY_GLYPHS[i % CANDY_GLYPHS.length];
+			p.style.left = Math.random() * 100 + "vw";
+			p.style.setProperty("--rot", (Math.random() * 720 - 360) + "deg");
+			p.style.animationDuration = (2.5 + Math.random() * 2) + "s";
+			p.style.animationDelay = (Math.random() * 1.5) + "s";
+			document.body.appendChild(p);
+			setTimeout(() => p.remove(), 6500);
+		}
+	}
+
+	// Предыдущие состояния ячеек и статус игры — для запуска анимаций
+	// только в момент изменения (не при загрузке страницы).
+	let prevCellStates = null; // "teamId:cell" -> state
+	let prevStatus = null;
 
 	function render(st) {
 		lastState = st;
@@ -88,6 +139,8 @@ function initBoard(opts) {
 			grid.style.gridTemplateColumns = `repeat(${st.n}, 1fr)`;
 			for (const cell of team.cells || []) {
 				const d = cellDiv(cell, { link: false });
+				d.dataset.teamId = team.id;
+				d.dataset.cell = cell.cell;
 				if (opts.mode === "admin") {
 					d.classList.add("clickable");
 					d.addEventListener("click", (ev) => adminCellMenu(ev, team, cell, st));
@@ -171,6 +224,35 @@ function initBoard(opts) {
 				}
 				box.appendChild(t);
 			}
+		}
+
+		// Праздничные анимации (не в админке): разлёт конфет из ячейки,
+		// ставшей «решена», и дождь из конфет при завершении игры.
+		// Срабатывают только на изменении, не при первой загрузке страницы.
+		if (opts.mode !== "admin") {
+			const cur = {};
+			for (const team of st.teams || []) {
+				for (const cell of team.cells || []) {
+					cur[team.id + ":" + cell.cell] = cell.state;
+				}
+			}
+			if (prevCellStates) {
+				for (const k in cur) {
+					if (cur[k] === "passed" && prevCellStates[k] && prevCellStates[k] !== "passed") {
+						const [tid, cn] = k.split(":");
+						const el = document.querySelector(
+							`.cell[data-team-id="${tid}"][data-cell="${cn}"]`);
+						if (el) {
+							const r = el.getBoundingClientRect();
+							candyBurst(window.scrollX + r.left + r.width / 2,
+								window.scrollY + r.top + r.height / 2);
+						}
+					}
+				}
+			}
+			prevCellStates = cur;
+			if (prevStatus === "running" && st.status === "finished") candyRain();
+			prevStatus = st.status;
 		}
 	}
 
