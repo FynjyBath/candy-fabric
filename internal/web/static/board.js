@@ -110,6 +110,19 @@ function initBoard(opts) {
 	let prevCellStates = null; // "teamId:cell" -> state
 	let prevStatus = null;
 
+	// Конвейеры: позиция ленты — детерминированная функция настенных часов,
+	// поэтому пересоздание элементов при перерисовке табло не сбивает фазу.
+	function animateBelts() {
+		const t = Date.now() / 1000;
+		for (const el of document.querySelectorAll(".speed-stripe[data-dur]")) {
+			const dur = parseFloat(el.dataset.dur);
+			const px = ((t % dur) / dur) * 72;
+			el.style.backgroundPosition = px.toFixed(2) + "px 0px, 0px 0px";
+		}
+		requestAnimationFrame(animateBelts);
+	}
+	if (!reducedMotion) requestAnimationFrame(animateBelts);
+
 	function render(st) {
 		lastState = st;
 		updateTimer();
@@ -129,10 +142,17 @@ function initBoard(opts) {
 			col.appendChild(stats);
 			const stripe = document.createElement("div");
 			stripe.className = "speed-stripe";
-			// Период анимации обратно пропорционален скорости (декоративно).
+			// Скорость ленты обратно пропорциональна периоду (декоративно);
+			// само движение задаёт общий rAF-цикл ниже.
 			const speed = Math.max(team.speed, 0);
-			stripe.style.animationDuration = speed > 0 ? Math.max(0.25, 16 / speed) + "s" : "0s";
-			if (speed <= 0) stripe.style.animationPlayState = "paused";
+			if (speed > 0) {
+				const dur = Math.max(0.25, 16 / speed);
+				stripe.dataset.dur = dur;
+				// Позиция сразу при создании — без однокадрового «нуля»
+				// до первого тика rAF-цикла.
+				const px = ((Date.now() / 1000 % dur) / dur) * 72;
+				stripe.style.backgroundPosition = px.toFixed(2) + "px 0px, 0px 0px";
+			}
 			col.appendChild(stripe);
 			const grid = document.createElement("div");
 			grid.className = "grid";
