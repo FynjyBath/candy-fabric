@@ -75,6 +75,18 @@ function adminCellMenu(ev, team, cell, st) {
 	buyTest.onclick = () => addEvent({ team_id: team.id, task_id: cell.task_id, type: "buy_test" });
 	menu.appendChild(buyTest);
 
+	// Ручной зачёт: отметить решённой без посылки на информатиксе
+	// (страховка на случай недоступности информатикса, ТЗ 5.2).
+	const solve = document.createElement("button");
+	solve.textContent = "Отметить решённой";
+	solve.disabled = cell.state !== "bought" || !cell.task_id;
+	solve.title = cell.state === "hidden" ? "сначала купите задачу" : "";
+	solve.onclick = () => {
+		if (!confirm(`Зачесть задачу как решённую команде «${team.name}» (без посылки на информатиксе)?`)) return;
+		addEvent({ team_id: team.id, task_id: cell.task_id, type: "solve", comment: "зачтено вручную" });
+	};
+	menu.appendChild(solve);
+
 	const close = document.createElement("button");
 	close.className = "secondary";
 	close.textContent = "Закрыть";
