@@ -171,7 +171,11 @@ func (s *Server) buildState(snap *gameSnapshot, include string, forTeamID int64)
 					cj.State = st.State
 					cj.Tests = st.Tests
 				}
-				withDetails := include == "admin" || (include == "team" && tm.ID == forTeamID)
+				// Команда видит ссылку (и вообще какую-либо идентификацию
+				// задачи, включая chapterid) только после покупки: до этого
+				// ячейка — просто номер. Админ видит всё всегда.
+				withDetails := include == "admin" ||
+					(include == "team" && tm.ID == forTeamID && cj.State != game.StateHidden)
 				if withDetails {
 					if task, ok := taskByID[taskID]; ok {
 						cj.URL = task.URL

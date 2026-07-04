@@ -10,8 +10,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
+	"candyfactory/internal/game"
 	"candyfactory/internal/store"
 )
 
@@ -30,6 +32,7 @@ type Server struct {
 	pageRefresh time.Duration
 	cache       *stateCache
 	tmpl        *template.Template
+	buyMu       sync.Mutex // сериализация самостоятельных покупок команд
 
 	// Баннер опросчика: функция возвращает (текст последней ошибки, время).
 	PollerError func() (string, time.Time)
@@ -114,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /g/{gameId}/team/{teamId}", s.handleTeamPage)
 	mux.HandleFunc("GET /api/g/{gameId}/state", s.handlePublicState)
 	mux.HandleFunc("GET /api/g/{gameId}/team/{teamId}/state", s.handleTeamState)
+	mux.HandleFunc("POST /api/g/{gameId}/team/{teamId}/buy", s.handleTeamBuy)
 
 	s.registerAdmin(mux)
 	return mux
@@ -178,6 +182,7 @@ func (s *Server) handlePublicBoard(w http.ResponseWriter, r *http.Request) {
 		"Mode":       "public",
 		"StateURL":   fmt.Sprintf("/api/g/%d/state", g.ID),
 		"RefreshSec": s.pageRefresh.Seconds(),
+		"CSRF":       "",
 	})
 }
 
@@ -276,7 +281,113 @@ func (s *Server) handleTeamPage(w http.ResponseWriter, r *http.Request) {
 		"Mode":       "team",
 		"StateURL":   fmt.Sprintf("/api/g/%d/team/%d/state", g.ID, team.ID),
 		"RefreshSec": s.pageRefresh.Seconds(),
+		"CSRF":       s.csrfToken(r),
 	})
+}
+
+// handleTeamBuy — самостоятельная покупка задачи командой. Задача адресуется
+// номером ячейки (а не task_id), чтобы до покупки команда не могла опознать
+// задачу по идентификатору. В отличие от админа, команде покупка «в минус»
+// блокируется, а не подтверждается.
+func (s *Server) handleTeamBuy(w http.ResponseWriter, r *http.Request) {
+	g := s.gameFromPath(w, r)
+	if g == nil {
+		return
+	}
+	// Для API-запроса редирект на форму логина не годится: без сессии — 401
+	// (иначе fetch молча проследует за редиректом и примет HTML за успех).
+	if s.session(r) == nil {
+		jsonErr(w, http.StatusUnauthorized, "требуется вход команды")
+		return
+	}
+	team := s.teamAccess(w, r, g)
+	if team == nil {
+		return
+	}
+	if !s.checkCSRF(r) {
+		jsonErr(w, http.StatusForbidden, "неверный CSRF-токен")
+		return
+	}
+	// Покупки сериализуются (в т. ч. с админскими событиями): два
+	// одновременных клика не купят одну задачу дважды и не уведут баланс
+	// в минус.
+	s.buyMu.Lock()
+	defer s.buyMu.Unlock()
+
+	// Игру перечитываем под мьютексом: параллельное продление/сокращение
+	// могло поменять длительность после разбора пути.
+	g, err := s.store.GetGame(g.ID)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
+		return
+	}
+	if g.Status(time.Now()) != "running" {
+		jsonErr(w, http.StatusConflict, "покупки доступны только во время игры")
+		return
+	}
+	cell, err := strconv.Atoi(r.FormValue("cell"))
+	if err != nil || cell < 1 || cell > g.N*g.N {
+		jsonErr(w, http.StatusBadRequest, "некорректная ячейка")
+		return
+	}
+	order, err := s.store.GetTaskOrder(team.ID)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
+		return
+	}
+	taskID, ok := order[cell]
+	if !ok {
+		jsonErr(w, http.StatusConflict, "задача ячейки ещё не назначена")
+		return
+	}
+	snap, err := s.snapshot(g)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
+		return
+	}
+	ts := snap.Result.Teams[team.ID]
+	if ts == nil {
+		jsonErr(w, http.StatusInternalServerError, "состояние команды не найдено")
+		return
+	}
+	st := ts.Tasks[taskID]
+	if st == nil || st.State != game.StateHidden {
+		jsonErr(w, http.StatusConflict, "задача уже куплена")
+		return
+	}
+	var lvl *store.Level
+	for i := range snap.Tasks {
+		if snap.Tasks[i].ID == taskID {
+			for j := range snap.Levels {
+				if snap.Levels[j].Level == snap.Tasks[i].Level {
+					lvl = &snap.Levels[j]
+				}
+			}
+		}
+	}
+	if lvl == nil {
+		jsonErr(w, http.StatusInternalServerError, "уровень задачи не найден")
+		return
+	}
+	if ts.Amount < lvl.TaskCost {
+		jsonErr(w, http.StatusConflict, "Недостаточно средств")
+		return
+	}
+	if ts.Speed < lvl.Load {
+		jsonErr(w, http.StatusConflict, "Недостаточно производительности")
+		return
+	}
+	if _, err := s.store.AddEvent(&store.Event{
+		GameID: g.ID, TeamID: team.ID, TaskID: &taskID,
+		Type: "buy_task", At: time.Now().UTC().Truncate(time.Second),
+		Source: "manual", Enabled: true, Comment: "куплено командой",
+	}); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сохранения")
+		return
+	}
+	s.logger.Printf("INFO команда %q купила задачу (игра %d, ячейка %d, task %d, −%d)",
+		team.Name, g.ID, cell, taskID, lvl.TaskCost)
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) handleTeamState(w http.ResponseWriter, r *http.Request) {

@@ -16,7 +16,7 @@
 <section id="own-table-box">
 	<h2>Ваши задачи</h2>
 	<div id="own-table"></div>
-	<p class="hint">Ссылки открывают условия на информатиксе. Цвет ячейки — состояние задачи.</p>
+	<p class="hint">Ссылка на условие появляется после покупки задачи. Кнопка «Купить» списывает цену задачи и снижает скорость на её нагрузку.</p>
 </section>
 {{end}}
 
@@ -50,7 +50,9 @@ initBoard({
 	stateUrl: {{.StateURL}},
 	mode: {{.Mode}},
 	refreshSec: {{.RefreshSec}},
-	teamId: {{if .Team}}{{.Team.ID}}{{else}}0{{end}}
+	teamId: {{if .Team}}{{.Team.ID}}{{else}}0{{end}},
+	gameId: {{.Game.ID}},
+	csrf: {{.CSRF}}
 });
 </script>
 </body>

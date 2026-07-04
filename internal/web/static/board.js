@@ -35,7 +35,7 @@ function initBoard(opts) {
 		}
 	}
 
-	function num(x) { return x.toLocaleString("ru-RU"); }
+	function num(x) { return x == null ? "?" : x.toLocaleString("ru-RU"); }
 
 	function cellDiv(cell, opts2) {
 		const div = document.createElement("div");
@@ -134,8 +134,9 @@ function initBoard(opts) {
 		});
 		paramsEl.appendChild(tbl);
 
-		// Собственная таблица задач команды (8.3): ссылки на условия,
-		// порядок — перестановка этой команды, подписи строк — уровни.
+		// Собственная таблица задач команды: порядок — перестановка этой
+		// команды, подписи строк — уровни. Ссылка на условие появляется
+		// после покупки; некупленную задачу команда покупает сама.
 		if (opts.mode === "team") {
 			const own = (st.teams || []).find((t) => t.id === opts.teamId);
 			const box = document.getElementById("own-table");
@@ -145,6 +146,7 @@ function initBoard(opts) {
 				const names = n === 3 ? ["Easy", "Middle", "Hard"] : [];
 				const t = document.createElement("table");
 				t.className = "list";
+				const running = st.status === "running";
 				for (let r = 0; r < n; r++) {
 					const tr = document.createElement("tr");
 					const th = document.createElement("th");
@@ -154,12 +156,52 @@ function initBoard(opts) {
 						const cell = own.cells[r * n + c];
 						const td = document.createElement("td");
 						td.appendChild(cellDiv(cell, { link: true }));
+						if (running && cell.state === "hidden") {
+							const level = st.levels[r] || {};
+							const btn = document.createElement("button");
+							btn.className = "buy-btn";
+							btn.textContent = "Купить";
+							btn.addEventListener("click", () =>
+								teamBuy(cell.cell, r + 1, level.task_cost, level.load, btn));
+							td.appendChild(btn);
+						}
 						tr.appendChild(td);
 					}
 					t.appendChild(tr);
 				}
 				box.appendChild(t);
 			}
+		}
+	}
+
+	// Покупка задачи командой: подтверждение с ценой, при отказе сервера —
+	// показ причины («Недостаточно средств» и т. п.).
+	async function teamBuy(cellNum, level, cost, load, btn) {
+		const msg = `Купить задачу уровня ${level} за ${num(cost)} (скорость снизится на ${num(load)})?`;
+		if (!confirm(msg)) return;
+		btn.disabled = true;
+		try {
+			const body = new URLSearchParams({ cell: String(cellNum) });
+			const resp = await fetch(`/api/g/${opts.gameId}/team/${opts.teamId}/buy`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					"X-CSRF-Token": opts.csrf,
+				},
+				body: body.toString(),
+			});
+			let data = {};
+			try { data = await resp.json(); } catch (e) { /* не-JSON ответ */ }
+			if (!resp.ok) {
+				alert(data.error || "Не удалось купить задачу");
+				btn.disabled = false;
+				return;
+			}
+			lastRendered = ""; // форсировать перерисовку со свежим состоянием
+			tick();
+		} catch (e) {
+			alert("Нет связи с сервером, попробуйте ещё раз");
+			btn.disabled = false;
 		}
 	}
 

@@ -30,7 +30,9 @@
 	{{if or (eq .StatusNow "running") (eq .StatusNow "finished")}}
 	<form method="post" action="/admin/g/{{.Game.ID}}/extend" class="inline">
 		<input type="hidden" name="csrf" value="{{.CSRF}}">
-		<button type="submit">+15 минут</button>
+		<input name="minutes" type="number" step="any" value="15" required
+			style="width:5em" title="минуты; отрицательное значение сокращает игру">
+		<button type="submit">Продлить (мин)</button>
 	</form>
 	{{end}}
 	<form method="post" action="/admin/g/{{.Game.ID}}/archive" class="inline"

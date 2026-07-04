@@ -288,18 +288,17 @@ func TestPublicStateHasNoLinks(t *testing.T) {
 		} `json:"teams"`
 	}
 	getJSON(t, tc, ts.URL+"/api"+teamURL+"/state", &teamState)
-	withURL, withoutURL := 0, 0
+	withURL := 0
 	for _, tm := range teamState.Teams {
 		for _, cell := range tm.Cells {
 			if cell.URL != "" {
 				withURL++
-			} else {
-				withoutURL++
 			}
 		}
 	}
-	if withURL != 9 || withoutURL != 18 {
-		t.Errorf("в командном API ссылки только у своей команды: with=%d without=%d (ожидалось 9/18)", withURL, withoutURL)
+	// Ссылка появляется только после покупки задачи: до покупок их нет ни у кого.
+	if withURL != 0 {
+		t.Errorf("до покупок в командном API не должно быть ссылок, найдено %d", withURL)
 	}
 	// Чужая командная сессия — 403.
 	parts := strings.Split(strings.Trim(teamURL, "/"), "/")
@@ -545,6 +544,191 @@ func TestFinishStopsAccrual(t *testing.T) {
 		t.Errorf("запасы после финиша %d, ожидалось %d", pub.Teams[0].Amount, want)
 	}
 	_ = csrf
+}
+
+// teamClient логинит команду и возвращает клиент, URL страницы и CSRF-токен.
+func teamClient(t *testing.T, ts *httptest.Server, gameID int64, login, password string) (*http.Client, string, string) {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	c := &http.Client{Jar: jar}
+	resp, err := c.PostForm(fmt.Sprintf("%s/g/%d/team", ts.URL, gameID),
+		url.Values{"login": {login}, "password": {password}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(resp.Request.URL.Path, "/team/") {
+		t.Fatalf("вход команды не удался: %s", resp.Request.URL.Path)
+	}
+	s := string(body)
+	i := strings.Index(s, `csrf: "`)
+	if i < 0 {
+		t.Fatalf("CSRF-токен не найден на странице команды")
+	}
+	s = s[i+len(`csrf: "`):]
+	return c, resp.Request.URL.Path, s[:strings.Index(s, `"`)]
+}
+
+// Самостоятельная покупка задачи командой: успех, появление ссылки, запрет
+// повторной покупки, блокировка при нехватке средств, запрет вне running.
+func TestTeamSelfBuy(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+	startGame(t, ts, c, csrf, gameID)
+
+	tc, teamPath, teamCSRF := teamClient(t, ts, gameID, "alpha", "pa")
+	buyURL := ts.URL + "/api" + teamPath + "/buy"
+	buy := func(cl *http.Client, token string, cell int) (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodPost, buyURL,
+			strings.NewReader(url.Values{"cell": {fmt.Sprint(cell)}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", token)
+		resp, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+
+	// Успешная покупка ячейки 1.
+	code, out := buy(tc, teamCSRF, 1)
+	if code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("покупка ячейки 1: HTTP %d %v", code, out)
+	}
+	var state struct {
+		Teams []struct {
+			ID     int64 `json:"id"`
+			Amount int64 `json:"amount"`
+			Speed  int64 `json:"speed"`
+			Cells  []struct {
+				State string `json:"state"`
+				URL   string `json:"url"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	getJSON(t, tc, ts.URL+"/api"+teamPath+"/state", &state)
+	var own *struct {
+		ID     int64 `json:"id"`
+		Amount int64 `json:"amount"`
+		Speed  int64 `json:"speed"`
+		Cells  []struct {
+			State string `json:"state"`
+			URL   string `json:"url"`
+		} `json:"cells"`
+	}
+	for i := range state.Teams {
+		if strings.HasSuffix(teamPath, fmt.Sprint(state.Teams[i].ID)) {
+			own = &state.Teams[i]
+		}
+	}
+	if own == nil {
+		t.Fatal("своя команда не найдена в состоянии")
+	}
+	if own.Speed != 13 {
+		t.Errorf("скорость после покупки %d, ожидалось 13", own.Speed)
+	}
+	if own.Cells[0].State != "bought" || own.Cells[0].URL == "" {
+		t.Errorf("ячейка 1 после покупки: state=%s url=%q — ожидалось bought со ссылкой", own.Cells[0].State, own.Cells[0].URL)
+	}
+
+	// Повторная покупка той же ячейки — отказ.
+	code, out = buy(tc, teamCSRF, 1)
+	if code != http.StatusConflict {
+		t.Errorf("повторная покупка: HTTP %d %v, ожидался 409", code, out)
+	}
+	// Некорректная ячейка.
+	if code, _ := buy(tc, teamCSRF, 99); code != http.StatusBadRequest {
+		t.Errorf("покупка ячейки 99: HTTP %d, ожидался 400", code)
+	}
+	// Без CSRF-токена — отказ.
+	if code, _ := buy(tc, "", 2); code != http.StatusForbidden {
+		t.Errorf("покупка без CSRF: HTTP %d, ожидался 403", code)
+	}
+	// Без сессии — 401.
+	anon := &http.Client{}
+	req, _ := http.NewRequest(http.MethodPost, buyURL, strings.NewReader("cell=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, _ := anon.Do(req)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("покупка без сессии: HTTP %d, ожидался 401", resp.StatusCode)
+	}
+
+	// Скупаем до нехватки средств: в отличие от админа, команде — отказ.
+	sawInsufficient := false
+	for cell := 2; cell <= 9; cell++ {
+		code, out := buy(tc, teamCSRF, cell)
+		if code == http.StatusConflict {
+			if msg, _ := out["error"].(string); strings.Contains(msg, "Недостаточно") {
+				sawInsufficient = true
+				break
+			}
+		}
+	}
+	if !sawInsufficient {
+		t.Errorf("блокировка «Недостаточно средств» так и не сработала")
+	}
+
+	// В не-running игре покупка запрещена.
+	g2 := createGame(t, ts, c, csrf) // draft
+	tc2, teamPath2, teamCSRF2 := teamClient(t, ts, g2, "alpha", "pa")
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath2+"/buy",
+		strings.NewReader("cell=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("X-CSRF-Token", teamCSRF2)
+	resp2, _ := tc2.Do(req2)
+	io.Copy(io.Discard, resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusConflict {
+		t.Errorf("покупка в draft-игре: HTTP %d, ожидался 409", resp2.StatusCode)
+	}
+	_ = st
+}
+
+// Продление на произвольное время.
+func TestExtendArbitrary(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+	startGame(t, ts, c, csrf, gameID)
+
+	extend := func(minutes string) int {
+		resp, err := c.PostForm(fmt.Sprintf("%s/admin/g/%d/extend", ts.URL, gameID),
+			url.Values{"csrf": {csrf}, "minutes": {minutes}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := extend("30"); code != http.StatusOK {
+		t.Fatalf("продление на 30 минут: HTTP %d", code)
+	}
+	g, _ := st.GetGame(gameID)
+	if g.DurationSec != 85*60+30*60 {
+		t.Errorf("duration = %d, ожидалось %d", g.DurationSec, 85*60+30*60)
+	}
+	if code := extend("-10"); code != http.StatusOK {
+		t.Fatalf("сокращение на 10 минут: HTTP %d", code)
+	}
+	g, _ = st.GetGame(gameID)
+	if g.DurationSec != 85*60+20*60 {
+		t.Errorf("после сокращения duration = %d, ожидалось %d", g.DurationSec, 85*60+20*60)
+	}
+	// Нулевое и сверхотрицательное значения — отказ.
+	if code := extend("0"); code != http.StatusBadRequest {
+		t.Errorf("продление на 0: HTTP %d, ожидался 400", code)
+	}
+	if code := extend("-100000"); code != http.StatusBadRequest {
+		t.Errorf("сокращение ниже минуты: HTTP %d, ожидался 400", code)
+	}
 }
 
 // Неизвестные id — 404.

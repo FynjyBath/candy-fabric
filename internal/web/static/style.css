@@ -97,6 +97,10 @@ form.inline { display: inline; }
 }
 .cell-menu button:disabled { background: #ccc; cursor: not-allowed; }
 
+/* Кнопка покупки в таблице команды */
+.buy-btn { display: block; margin: 4px auto 0; padding: 3px 10px; font-size: 0.85rem; }
+.buy-btn:disabled { background: #ccc; cursor: wait; }
+
 details form { margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
 details form label { font-size: 0.9rem; }
 

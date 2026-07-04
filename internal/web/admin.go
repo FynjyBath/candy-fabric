@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -473,16 +474,36 @@ func (s *Server) handleAdminStart(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d", g.ID), http.StatusSeeOther)
 }
 
+// handleAdminExtend продлевает (или сокращает, при отрицательном значении)
+// игру на произвольное число минут; длительность не может стать меньше минуты.
 func (s *Server) handleAdminExtend(w http.ResponseWriter, r *http.Request) {
 	g := s.gameFromPath(w, r)
 	if g == nil {
 		return
 	}
-	if err := s.store.ExtendGameDuration(g.ID, 900); err != nil {
+	if g.Status(time.Now()) == "archived" {
+		http.Error(w, "архивная игра не редактируется", http.StatusConflict)
+		return
+	}
+	minutes, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("minutes")), 64)
+	// NaN/Inf и заведомо абсурдные значения отсекаем до целочисленной
+	// арифметики (int64(NaN*60) не определён).
+	if err != nil || math.IsNaN(minutes) || math.IsInf(minutes, 0) ||
+		minutes == 0 || math.Abs(minutes) > 7*24*60 {
+		http.Error(w, "укажите ненулевое число минут (не больше недели)", http.StatusBadRequest)
+		return
+	}
+	deltaSec := int64(minutes * 60)
+	ok, err := s.store.ExtendGameDuration(g.ID, deltaSec)
+	if err != nil {
 		http.Error(w, "ошибка сервера", http.StatusInternalServerError)
 		return
 	}
-	s.logger.Printf("INFO admin: игра %d продлена на 15 минут", g.ID)
+	if !ok {
+		http.Error(w, "длительность игры не может стать меньше минуты", http.StatusBadRequest)
+		return
+	}
+	s.logger.Printf("INFO admin: длительность игры %d изменена на %+g минут", g.ID, minutes)
 	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d", g.ID), http.StatusSeeOther)
 }
 
@@ -740,6 +761,11 @@ func (s *Server) handleAdminEventAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, errMsg)
 		return
 	}
+	// Сериализация с самостоятельными покупками команд: без неё команда,
+	// прошедшая проверку состояния, могла бы вставить buy_task одновременно
+	// с админским событием по той же задаче (двойное списание).
+	s.buyMu.Lock()
+	defer s.buyMu.Unlock()
 	// Предупреждение о нехватке средств: сохранение только после явного
 	// подтверждения (confirmed=1); администратор — окончательный авторитет.
 	if r.FormValue("confirmed") != "1" {

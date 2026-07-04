@@ -392,12 +392,18 @@ func (s *Store) SetGameDuration(id int64, sec int64) error {
 	return err
 }
 
-// ExtendGameDuration атомарно продлевает игру (два одновременных «+15 минут»
-// не потеряют друг друга).
-func (s *Store) ExtendGameDuration(id int64, deltaSec int64) error {
-	_, err := s.DB.Exec(`UPDATE games SET duration_sec = duration_sec + ? WHERE id=?`, deltaSec, id)
+// ExtendGameDuration атомарно меняет длительность игры; минимальный порог
+// в 60 секунд проверяется в том же UPDATE, поэтому два одновременных
+// сокращения не пробьют его вдвоём. Возвращает false, если порог не позволил.
+func (s *Store) ExtendGameDuration(id int64, deltaSec int64) (bool, error) {
+	res, err := s.DB.Exec(`UPDATE games SET duration_sec = duration_sec + ?
+		WHERE id=? AND duration_sec + ? >= 60`, deltaSec, id, deltaSec)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
 	s.Bump(id)
-	return err
+	return n > 0, nil
 }
 
 // TeamCounts — число команд по играм одним запросом (для списка игр).
