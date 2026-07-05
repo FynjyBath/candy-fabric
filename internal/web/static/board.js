@@ -110,6 +110,79 @@ function initBoard(opts) {
 	let prevCellStates = null; // "teamId:cell" -> state
 	let prevStatus = null;
 
+	// Победители: команды с максимальными запасами (ничья = несколько).
+	function winnersOf(st) {
+		const teams = st.teams || [];
+		if (st.status !== "finished" || teams.length === 0) return [];
+		const max = Math.max(...teams.map((t) => t.amount));
+		return teams.filter((t) => t.amount === max);
+	}
+
+	// Постоянный баннер победителя: висит на странице всё время после финиша.
+	function renderWinner(st) {
+		const box = document.getElementById("winner");
+		if (!box) return;
+		const winners = winnersOf(st);
+		if (winners.length === 0) {
+			box.hidden = true;
+			box.textContent = "";
+			return;
+		}
+		box.hidden = false;
+		box.className = "winner-banner";
+		box.textContent = "";
+		const trophy = document.createElement("span");
+		trophy.className = "winner-trophy";
+		trophy.textContent = "🏆";
+		box.appendChild(trophy);
+		const text = document.createElement("div");
+		const title = document.createElement("div");
+		title.className = "winner-title";
+		title.textContent = winners.length > 1 ? "Победители" : "Победитель";
+		const name = document.createElement("div");
+		name.className = "winner-name";
+		name.textContent = winners.map((w) => "«" + w.name + "»").join(", ");
+		const score = document.createElement("div");
+		score.className = "winner-score";
+		score.textContent = num(winners[0].amount) + " конфет на складе";
+		text.appendChild(title);
+		text.appendChild(name);
+		text.appendChild(score);
+		box.appendChild(text);
+	}
+
+	// Торжественная заставка в момент финиша (исчезает сама).
+	function winnerOverlay(st) {
+		if (reducedMotion) return;
+		const winners = winnersOf(st);
+		if (winners.length === 0) return;
+		const ov = document.createElement("div");
+		ov.className = "winner-overlay";
+		const card = document.createElement("div");
+		card.className = "winner-card";
+		const trophy = document.createElement("div");
+		trophy.className = "winner-overlay-trophy";
+		trophy.textContent = "🏆";
+		const title = document.createElement("div");
+		title.className = "winner-title";
+		title.textContent = winners.length > 1 ? "Победители!" : "Победитель!";
+		const name = document.createElement("div");
+		name.className = "winner-overlay-name";
+		name.textContent = winners.map((w) => "«" + w.name + "»").join(", ");
+		const score = document.createElement("div");
+		score.className = "winner-score";
+		score.textContent = num(winners[0].amount) + " конфет";
+		card.appendChild(trophy);
+		card.appendChild(title);
+		card.appendChild(name);
+		card.appendChild(score);
+		ov.appendChild(card);
+		ov.addEventListener("click", () => ov.remove());
+		document.body.appendChild(ov);
+		setTimeout(() => ov.classList.add("fade-out"), 8000);
+		setTimeout(() => ov.remove(), 9000);
+	}
+
 	// Звуки: решение задачи и финиш игры. Браузер блокирует звук до первого
 	// клика по странице — play() тогда молча откажет, это нормально.
 	const sndSolve = new Audio("/static/game-won.mp3");
@@ -137,6 +210,7 @@ function initBoard(opts) {
 	function render(st) {
 		lastState = st;
 		updateTimer();
+		renderWinner(st);
 
 		// Колонки команд: имя, запасы, скорость, полоска скорости, сетка n×n.
 		const teamsEl = document.getElementById("teams");
@@ -291,6 +365,7 @@ function initBoard(opts) {
 			if (prevStatus === "running" && st.status === "finished") {
 				candyRain();
 				playSound(sndFinish);
+				winnerOverlay(st);
 			}
 			prevStatus = st.status;
 		}
