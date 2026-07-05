@@ -110,6 +110,17 @@ function initBoard(opts) {
 	let prevCellStates = null; // "teamId:cell" -> state
 	let prevStatus = null;
 
+	// Звуки: решение задачи и финиш игры. Браузер блокирует звук до первого
+	// клика по странице — play() тогда молча откажет, это нормально.
+	const sndSolve = new Audio("/static/game-won.mp3");
+	const sndFinish = new Audio("/static/pvz-victory.mp3");
+	function playSound(snd) {
+		try {
+			snd.currentTime = 0;
+			snd.play().catch(() => {});
+		} catch (e) { /* нет поддержки/заблокировано */ }
+	}
+
 	// Конвейеры: позиция ленты — детерминированная функция настенных часов,
 	// поэтому пересоздание элементов при перерисовке табло не сбивает фазу.
 	function animateBelts() {
@@ -259,8 +270,10 @@ function initBoard(opts) {
 				}
 			}
 			if (prevCellStates) {
+				let solvedNow = false;
 				for (const k in cur) {
 					if (cur[k] === "passed" && prevCellStates[k] && prevCellStates[k] !== "passed") {
+						solvedNow = true;
 						const [tid, cn] = k.split(":");
 						const el = document.querySelector(
 							`.cell[data-team-id="${tid}"][data-cell="${cn}"]`);
@@ -271,9 +284,14 @@ function initBoard(opts) {
 						}
 					}
 				}
+				// Один проигрыш на обновление, даже если решений несколько.
+				if (solvedNow) playSound(sndSolve);
 			}
 			prevCellStates = cur;
-			if (prevStatus === "running" && st.status === "finished") candyRain();
+			if (prevStatus === "running" && st.status === "finished") {
+				candyRain();
+				playSound(sndFinish);
+			}
 			prevStatus = st.status;
 		}
 	}
