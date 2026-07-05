@@ -11,17 +11,24 @@ import (
 
 // mockInformatics — минимальный мок Moodle-логина и API filter-runs.
 type mockInformatics struct {
-	mu          int // защита не нужна: httptest сервер + последовательные вызовы
-	loginCount  int
-	badPassword bool
-	requireAuth bool
-	authorized  bool
-	runsJSON    string
+	mu           int // защита не нужна: httptest сервер + последовательные вызовы
+	loginCount   int
+	badPassword  bool
+	requireAuth  bool
+	authorized   bool
+	loggedInPage bool // GET страницы логина отдаёт «вы уже вошли» без токена
+	runsJSON     string
 }
 
 func (m *mockInformatics) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login/index.php", func(w http.ResponseWriter, r *http.Request) {
+		if m.loggedInPage {
+			// Живая сессия Moodle: вместо формы — страница «вы уже вошли»
+			// без logintoken.
+			fmt.Fprint(w, `<a href="https://example/login/logout.php">Выход</a>`)
+			return
+		}
 		fmt.Fprint(w, `<form><input type="hidden" name="logintoken" value="tok123"></form>`)
 	})
 	mux.HandleFunc("POST /login/index.php", func(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +109,27 @@ func TestClientBadCredentials(t *testing.T) {
 	_, _, err := c.FetchRunsPage(7, 1)
 	if err == nil {
 		t.Fatal("ожидалась ошибка bad credentials")
+	}
+}
+
+// Перелогин по 30-минутному таймеру при ещё живой сессии Moodle: страница
+// логина без формы (уже вошли) — это успех, а не «login token not found».
+func TestRelolginWithAliveSession(t *testing.T) {
+	m := &mockInformatics{runsJSON: sampleRuns}
+	c := newMockClient(t, m)
+	if err := c.ensureLogin(false); err != nil {
+		t.Fatal(err)
+	}
+	// Наш таймер истёк, но сессия Moodle жива: форма логина не показывается.
+	m.loggedInPage = true
+	if err := c.ensureLogin(true); err != nil {
+		t.Fatalf("перелогин при живой сессии должен быть успешным: %v", err)
+	}
+	if m.loginCount != 1 {
+		t.Errorf("POST логина %d, ожидался 1 — при живой сессии форма не отправляется", m.loginCount)
+	}
+	if _, _, err := c.FetchRunsPage(7, 1); err != nil {
+		t.Fatalf("выкачка после «перелогина» должна работать: %v", err)
 	}
 }
 

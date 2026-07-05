@@ -96,6 +96,13 @@ func (c *Client) login() error {
 	if err != nil {
 		return fmt.Errorf("чтение страницы логина: %w", err)
 	}
+	// Сессия Moodle может жить дольше нашего 30-минутного таймера: тогда
+	// вместо формы логина приходит страница «вы уже вошли» без logintoken.
+	// Это успех, а не ошибка — перелогин не нужен.
+	if strings.Contains(string(body), "logout.php") {
+		c.lastLoginAt = time.Now()
+		return nil
+	}
 	m := loginTokenRe.FindSubmatch(body)
 	if m == nil {
 		return fmt.Errorf("informatics login token not found")
