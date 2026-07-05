@@ -9,7 +9,9 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,12 @@ type Server struct {
 	tmpl        *template.Template
 	buyMu       sync.Mutex // сериализация самостоятельных покупок команд
 
+	// Оформление всего сайта: candy | neuro | hamster. Хранится в файле,
+	// меняется из админки, применяется ко всем страницам сразу.
+	themePath string
+	themeMu   sync.RWMutex
+	theme     string
+
 	// Баннер опросчика: функция возвращает (текст последней ошибки, время).
 	PollerError func() (string, time.Time)
 	// Базовый URL информатикса для канонических ссылок.
@@ -45,9 +53,17 @@ type Config struct {
 	Logger          *log.Logger
 	Secret          []byte
 	AdminCredsPath  string
+	ThemePath       string // файл с текущим оформлением сайта
 	PageRefresh     time.Duration
 	PollerError     func() (string, time.Time)
 	InformaticsBase string
+}
+
+// Доступные оформления сайта.
+var validThemes = map[string]string{
+	"candy":   "Конфетная фабрика",
+	"neuro":   "Токены и нейросети",
+	"hamster": "Тапаем хомяка",
 }
 
 func NewServer(cfg Config) (*Server, error) {
@@ -56,10 +72,20 @@ func NewServer(cfg Config) (*Server, error) {
 		logger:          cfg.Logger,
 		secret:          cfg.Secret,
 		adminCreds:      cfg.AdminCredsPath,
+		themePath:       cfg.ThemePath,
+		theme:           "candy",
 		pageRefresh:     cfg.PageRefresh,
 		cache:           newStateCache(),
 		PollerError:     cfg.PollerError,
 		InformaticsBase: cfg.InformaticsBase,
+	}
+	if s.themePath != "" {
+		if b, err := os.ReadFile(s.themePath); err == nil {
+			t := strings.TrimSpace(string(b))
+			if _, ok := validThemes[t]; ok {
+				s.theme = t
+			}
+		}
 	}
 	if s.pageRefresh <= 0 {
 		s.pageRefresh = time.Second
@@ -125,7 +151,36 @@ func (s *Server) Handler() http.Handler {
 
 // ---------- Вспомогательное ----------
 
+// Theme — текущее оформление сайта.
+func (s *Server) Theme() string {
+	s.themeMu.RLock()
+	defer s.themeMu.RUnlock()
+	return s.theme
+}
+
+// SetTheme меняет оформление сайта и сохраняет его на диск.
+func (s *Server) SetTheme(t string) error {
+	if _, ok := validThemes[t]; !ok {
+		return fmt.Errorf("неизвестное оформление %q", t)
+	}
+	s.themeMu.Lock()
+	s.theme = t
+	s.themeMu.Unlock()
+	if s.themePath != "" {
+		return os.WriteFile(s.themePath, []byte(t+"\n"), 0o644)
+	}
+	return nil
+}
+
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	// Тема сайта нужна каждой странице — подкладываем централизованно.
+	if m, ok := data.(map[string]any); ok {
+		if _, exists := m["Theme"]; !exists {
+			t := s.Theme()
+			m["Theme"] = t
+			m["SiteTitle"] = validThemes[t]
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Printf("ERROR шаблон %s: %v", name, err)

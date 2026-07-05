@@ -65,8 +65,34 @@ function initBoard(opts) {
 		return div;
 	}
 
+	// ---------- Оформление сайта ----------
+	// Словарь тем: подписи и «частицы» анимаций. Тема приходит с сервера
+	// атрибутом data-theme на <body>.
+	const THEMES = {
+		candy: {
+			glyphs: ["🍬", "🍭", "🍫", "🧁"],
+			amount: "Запасы", speed: "Скорость",
+			winUnit: "конфет на складе", overlayUnit: "конфет",
+		},
+		neuro: {
+			glyphs: ["🧠", "🤖", "⚡", "💾"],
+			amount: "Токены", speed: "Мощность",
+			winUnit: "токенов сгенерировано", overlayUnit: "токенов",
+		},
+		hamster: {
+			glyphs: ["🐹", "🪙", "💰", "⚡"],
+			amount: "Монеты", speed: "Тапы/с",
+			winUnit: "монет натапано", overlayUnit: "монет",
+		},
+	};
+	const THEME = THEMES[document.body.dataset.theme] || THEMES.candy;
+	{
+		const heading = document.getElementById("amount-heading");
+		if (heading) heading.textContent = THEME.amount;
+	}
+
 	// ---------- Конфетная анимация ----------
-	const CANDY_GLYPHS = ["🍬", "🍭", "🍫", "🧁"];
+	const CANDY_GLYPHS = THEME.glyphs;
 	const reducedMotion = window.matchMedia &&
 		window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -144,7 +170,7 @@ function initBoard(opts) {
 		name.textContent = winners.map((w) => "«" + w.name + "»").join(", ");
 		const score = document.createElement("div");
 		score.className = "winner-score";
-		score.textContent = num(winners[0].amount) + " конфет на складе";
+		score.textContent = num(winners[0].amount) + " " + THEME.winUnit;
 		text.appendChild(title);
 		text.appendChild(name);
 		text.appendChild(score);
@@ -171,7 +197,7 @@ function initBoard(opts) {
 		name.textContent = winners.map((w) => "«" + w.name + "»").join(", ");
 		const score = document.createElement("div");
 		score.className = "winner-score";
-		score.textContent = num(winners[0].amount) + " конфет";
+		score.textContent = num(winners[0].amount) + " " + THEME.overlayUnit;
 		card.appendChild(trophy);
 		card.appendChild(title);
 		card.appendChild(name);
@@ -224,7 +250,7 @@ function initBoard(opts) {
 			col.appendChild(h);
 			const stats = document.createElement("div");
 			stats.className = "stats";
-			stats.innerHTML = `Запасы: <b>${num(team.amount)}</b><br>Скорость: <b>${num(team.speed)}</b>`;
+			stats.innerHTML = `${THEME.amount}: <b>${num(team.amount)}</b><br>${THEME.speed}: <b>${num(team.speed)}</b>`;
 			col.appendChild(stats);
 			const stripe = document.createElement("div");
 			stripe.className = "speed-stripe";

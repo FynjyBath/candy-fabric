@@ -4,9 +4,9 @@
 {{template "head" .}}
 <title>Админка — вход</title>
 </head>
-<body>
+<body data-theme="{{.Theme}}">
 <main class="page narrow">
-<h1>Админка «Конфетной фабрики»</h1>
+<h1>Админка «{{.SiteTitle}}»</h1>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <form method="post" action="/admin/login" class="login-form">
 	<input type="hidden" name="next" value="{{.Next}}">

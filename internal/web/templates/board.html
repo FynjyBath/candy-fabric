@@ -4,7 +4,7 @@
 {{template "head" .}}
 <title>{{.Game.Title}}{{if .Team}} — {{.Team.Name}}{{end}}</title>
 </head>
-<body>
+<body data-theme="{{.Theme}}">
 <main class="page board-page">
 <header class="board-header">
 	<h1>{{.Game.Title}}{{if .Team}} <span class="team-badge">{{.Team.Name}}</span>{{end}}</h1>
@@ -27,7 +27,7 @@
 </section>
 
 <section>
-	<h2>Запасы</h2>
+	<h2 id="amount-heading">Запасы</h2>
 	<div id="histogram" class="histogram"></div>
 </section>
 

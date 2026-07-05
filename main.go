@@ -120,6 +120,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 		Logger:          logger,
 		Secret:          secret,
 		AdminCredsPath:  adminCredsPath,
+		ThemePath:       filepath.Join(dataDir, "theme.txt"),
 		PageRefresh:     pageRefresh,
 		PollerError:     pollerErr,
 		InformaticsBase: informaticsBase,

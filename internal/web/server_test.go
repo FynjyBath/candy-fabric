@@ -32,7 +32,8 @@ func testServer(t *testing.T) (*httptest.Server, *store.Store, string) {
 	secret := make([]byte, 32)
 	srv, err := NewServer(Config{
 		Store: st, Logger: log.New(io.Discard, "", 0), Secret: secret,
-		AdminCredsPath: credsPath, PageRefresh: 3 * time.Second,
+		AdminCredsPath: credsPath, ThemePath: filepath.Join(dir, "theme.txt"),
+		PageRefresh: 3 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1010,6 +1011,70 @@ func TestDelayStart(t *testing.T) {
 	startGame(t, ts, c, csrf, gameID)
 	if code := delay(); code != http.StatusConflict {
 		t.Errorf("delay-start после старта: HTTP %d, ожидался 409", code)
+	}
+}
+
+// Смена оформления сайта: применяется ко всем страницам, переживает рестарт,
+// мусорные значения отклоняются, без прав админа недоступна.
+func TestSiteTheme(t *testing.T) {
+	ts, _, dir := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+
+	pageTheme := func(cl *http.Client, url string) string {
+		resp, err := cl.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		i := strings.Index(string(body), `data-theme="`)
+		if i < 0 {
+			t.Fatalf("на странице %s нет data-theme", url)
+		}
+		s := string(body)[i+len(`data-theme="`):]
+		return s[:strings.Index(s, `"`)]
+	}
+	// По умолчанию — candy, на публичной странице тоже.
+	if th := pageTheme(http.DefaultClient, fmt.Sprintf("%s/g/%d", ts.URL, gameID)); th != "candy" {
+		t.Errorf("тема по умолчанию %q, ожидалась candy", th)
+	}
+	// Переключение.
+	resp, err := c.PostForm(ts.URL+"/admin/theme", url.Values{"csrf": {csrf}, "theme": {"hamster"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	for _, u := range []string{
+		fmt.Sprintf("%s/g/%d", ts.URL, gameID), // публичное табло
+		ts.URL + "/",                           // главная
+	} {
+		if th := pageTheme(http.DefaultClient, u); th != "hamster" {
+			t.Errorf("после переключения %s имеет тему %q", u, th)
+		}
+	}
+	// Файл темы записан (переживёт рестарт).
+	b, err := os.ReadFile(filepath.Join(dir, "theme.txt"))
+	if err != nil || strings.TrimSpace(string(b)) != "hamster" {
+		t.Errorf("файл темы: %q, %v", b, err)
+	}
+	// Мусорное значение — 400, тема не меняется.
+	resp, _ = c.PostForm(ts.URL+"/admin/theme", url.Values{"csrf": {csrf}, "theme": {"disco"}})
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("мусорная тема: HTTP %d, ожидался 400", resp.StatusCode)
+	}
+	// Без сессии — 403.
+	resp, _ = http.PostForm(ts.URL+"/admin/theme", url.Values{"theme": {"neuro"}})
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("смена темы без админа: HTTP %d, ожидался 403", resp.StatusCode)
+	}
+	if th := pageTheme(http.DefaultClient, ts.URL+"/"); th != "hamster" {
+		t.Errorf("тема сбилась после неудачных попыток: %q", th)
 	}
 }
 

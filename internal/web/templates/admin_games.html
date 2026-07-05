@@ -4,7 +4,7 @@
 {{template "head" .}}
 <title>Админка — игры</title>
 </head>
-<body>
+<body data-theme="{{.Theme}}">
 <main class="page">
 <header class="board-header">
 	<h1>Игры</h1>
@@ -13,7 +13,19 @@
 		<button type="submit" class="secondary">Выйти</button>
 	</form>
 </header>
-<p><a class="button" href="/admin/games/new">Создать игру</a></p>
+<p class="actions">
+	<a class="button" href="/admin/games/new">Создать игру</a>
+	<form method="post" action="/admin/theme" class="inline">
+		<input type="hidden" name="csrf" value="{{.CSRF}}">
+		Оформление сайта:
+		<select name="theme">
+			<option value="candy" {{if eq .Theme "candy"}}selected{{end}}>🍬 Конфетная фабрика</option>
+			<option value="neuro" {{if eq .Theme "neuro"}}selected{{end}}>🤖 Токены и нейросети</option>
+			<option value="hamster" {{if eq .Theme "hamster"}}selected{{end}}>🐹 Тапаем хомяка</option>
+		</select>
+		<button type="submit" class="secondary">Применить</button>
+	</form>
+</p>
 <table class="list">
 <tr><th>Название</th><th>Статус</th><th>n</th><th>Команд</th><th>Старт</th><th>Осталось</th><th></th></tr>
 {{range .Games}}

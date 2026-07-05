@@ -253,6 +253,74 @@ details summary { cursor: pointer; }
 	.candy-pop, .candy-rain { display: none; }
 }
 
+/* ==================== Тема «Токены и нейросети» ==================== */
+body[data-theme="neuro"] {
+	--bg: #eef1f8;
+	--ink: #232946;
+	--ink-soft: #5b6690;
+	--accent: #6c5ce7;
+	--accent-dark: #5246c9;
+	--caramel: #7ee0f2;      /* «куплена»: голубое свечение чипа */
+	--caramel-dark: #0f5e70;
+	--paper: #fbfcff;
+	--line: #d5dbef;
+	/* контурные чипы и связи нейросети */
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='170' height='170'%3E%3Cg fill='none' stroke='%23dde3f3' stroke-width='2'%3E%3Crect x='24' y='28' width='26' height='26' rx='4'/%3E%3Cpath d='M24 34h-8M24 48h-8M50 34h8M50 48h8M31 28v-8M43 28v-8M31 54v8M43 54v8'/%3E%3Ccircle cx='120' cy='40' r='5'/%3E%3Ccircle cx='150' cy='70' r='5'/%3E%3Ccircle cx='118' cy='96' r='5'/%3E%3Cpath d='M124 43l21 24M146 73l-23 19'/%3E%3Crect x='60' y='120' width='26' height='26' rx='4'/%3E%3Cpath d='M60 126h-8M60 140h-8M86 126h8M86 140h8'/%3E%3C/g%3E%3C/svg%3E");
+}
+body[data-theme="neuro"] h1::before {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26' width='26' height='26'%3E%3Crect x='5' y='5' width='16' height='16' rx='3' fill='%236c5ce7'/%3E%3Cpath d='M9 5V1M13 5V1M17 5V1M9 25v-4M13 25v-4M17 25v-4M5 9H1M5 13H1M5 17H1M25 9h-4M25 13h-4M25 17h-4' stroke='%235246c9' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='10' cy='12' r='1.8' fill='%23fff'/%3E%3Ccircle cx='16' cy='12' r='1.8' fill='%23fff'/%3E%3Cpath d='M9.5 16.5c2 1.6 5 1.6 7 0' stroke='%23fff' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+body[data-theme="neuro"] .speed-stripe {
+	background:
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='16'%3E%3Cg transform='translate(18,8)'%3E%3Crect x='-5' y='-4' width='10' height='8' rx='1.5' fill='%237ee0f2'/%3E%3Cpath d='M-5 -2h-3M-5 2h-3M5 -2h3M5 2h3' stroke='%237ee0f2' stroke-width='1.4'/%3E%3C/g%3E%3Cg transform='translate(54,8)'%3E%3Cpath d='M1.5 -6L-3 1h3L-1.5 6L4 -1H1z' fill='%23b7a6ff'/%3E%3C/g%3E%3C/svg%3E") repeat-x 0 0 / 72px 16px,
+		linear-gradient(#2b3151, #1d2240);
+}
+body[data-theme="neuro"] h2 {
+	border-image: repeating-linear-gradient(120deg, var(--accent) 0 8px, #fff 8px 12px, #7ee0f2 12px 20px, #fff 20px 24px) 1;
+}
+body[data-theme="neuro"] .histogram .bar {
+	background: linear-gradient(180deg, #9b8cff, var(--accent) 55%, var(--accent-dark));
+}
+body[data-theme="neuro"] .winner-banner {
+	background: linear-gradient(120deg, #e5e0ff, #d8f4fb);
+	border-color: var(--accent);
+}
+body[data-theme="neuro"] .team-badge,
+body[data-theme="neuro"] .status-badge { background: #cfd8ff; }
+
+/* ==================== Тема «Тапаем хомяка» ==================== */
+body[data-theme="hamster"] {
+	--bg: #fff3dd;
+	--ink: #4a3413;
+	--ink-soft: #86683a;
+	--accent: #f0940a;
+	--accent-dark: #c26e03;
+	--caramel: #ffd34d;
+	--caramel-dark: #7a5a00;
+	--paper: #fffaf0;
+	--line: #eeddb8;
+	/* контурные монеты и лапки */
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='165' height='165'%3E%3Cg fill='none' stroke='%23f3e2bd' stroke-width='2'%3E%3Ccircle cx='38' cy='42' r='14'/%3E%3Cpath d='M38 34v16M33 38h10M33 46h10'/%3E%3Ccircle cx='128' cy='118' r='14'/%3E%3Cpath d='M128 110v16M123 114h10M123 122h10'/%3E%3Cg transform='translate(120,36)'%3E%3Cellipse cx='0' cy='6' rx='6' ry='5'/%3E%3Ccircle cx='-6' cy='-3' r='2.4'/%3E%3Ccircle cx='0' cy='-5' r='2.4'/%3E%3Ccircle cx='6' cy='-3' r='2.4'/%3E%3C/g%3E%3Cg transform='translate(46,124)'%3E%3Cellipse cx='0' cy='6' rx='6' ry='5'/%3E%3Ccircle cx='-6' cy='-3' r='2.4'/%3E%3Ccircle cx='0' cy='-5' r='2.4'/%3E%3Ccircle cx='6' cy='-3' r='2.4'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+body[data-theme="hamster"] h1::before {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26' width='26' height='26'%3E%3Ccircle cx='13' cy='13' r='12' fill='%23f0b429'/%3E%3Ccircle cx='13' cy='13' r='9.5' fill='none' stroke='%23c98a06' stroke-width='1.6'/%3E%3Ccircle cx='7.5' cy='7' r='3' fill='%23f0b429' stroke='%23c98a06' stroke-width='1.2'/%3E%3Ccircle cx='18.5' cy='7' r='3' fill='%23f0b429' stroke='%23c98a06' stroke-width='1.2'/%3E%3Ccircle cx='10' cy='12' r='1.4' fill='%234a3413'/%3E%3Ccircle cx='16' cy='12' r='1.4' fill='%234a3413'/%3E%3Cellipse cx='13' cy='15.5' rx='1.6' ry='1.1' fill='%23c26e03'/%3E%3Cpath d='M10.5 18c1.6 1.2 3.4 1.2 5 0' stroke='%234a3413' stroke-width='1.3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+body[data-theme="hamster"] .speed-stripe {
+	background:
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='16'%3E%3Cg transform='translate(18,8)'%3E%3Ccircle r='5.5' fill='%23ffd34d'/%3E%3Ccircle r='3.8' fill='none' stroke='%23c98a06' stroke-width='1.2'/%3E%3C/g%3E%3Cg transform='translate(54,8)'%3E%3Ccircle r='5.5' fill='%23f0b429'/%3E%3Ccircle r='3.8' fill='none' stroke='%23a06d00' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E") repeat-x 0 0 / 72px 16px,
+		linear-gradient(#6e4f1e, #543a10);
+}
+body[data-theme="hamster"] h2 {
+	border-image: repeating-linear-gradient(120deg, var(--accent) 0 8px, #fff 8px 12px, #ffd34d 12px 20px, #fff 20px 24px) 1;
+}
+body[data-theme="hamster"] .histogram .bar {
+	background: linear-gradient(180deg, #ffc25e, var(--accent) 55%, var(--accent-dark));
+}
+body[data-theme="hamster"] .winner-banner {
+	background: linear-gradient(120deg, #ffedbf, #ffe1c2);
+	border-color: var(--accent);
+}
+
 @media (max-width: 700px) {
 	.timer { font-size: 1.5rem; }
 	.histogram .bar-label { width: 100px; }

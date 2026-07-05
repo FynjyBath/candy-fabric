@@ -2,11 +2,11 @@
 <html lang="ru">
 <head>
 {{template "head" .}}
-<title>Конфетная фабрика</title>
+<title>{{.SiteTitle}}</title>
 </head>
-<body>
+<body data-theme="{{.Theme}}">
 <main class="page">
-<h1>Конфетная фабрика</h1>
+<h1>{{.SiteTitle}}</h1>
 {{if .Games}}
 <table class="list">
 <tr><th>Игра</th><th>Статус</th><th>Старт</th></tr>

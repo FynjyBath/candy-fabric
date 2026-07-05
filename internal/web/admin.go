@@ -35,6 +35,18 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/g/{gameId}/anomaly/{anomalyId}/reject", s.adminGate(s.handleAdminAnomalyReject))
 	mux.HandleFunc("POST /admin/g/{gameId}/team/{teamId}/password", s.adminGate(s.handleAdminTeamPassword))
 	mux.HandleFunc("GET /admin/api/g/{gameId}/state", s.adminGate(s.handleAdminState))
+	mux.HandleFunc("POST /admin/theme", s.adminGate(s.handleAdminTheme))
+}
+
+// handleAdminTheme переключает оформление всего сайта.
+func (s *Server) handleAdminTheme(w http.ResponseWriter, r *http.Request) {
+	t := r.FormValue("theme")
+	if err := s.SetTheme(t); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.logger.Printf("INFO admin: оформление сайта переключено на %q", t)
+	http.Redirect(w, r, "/admin/games", http.StatusSeeOther)
 }
 
 // adminGate — все /admin/* без сессии: GET — форма входа, мутации — 403.

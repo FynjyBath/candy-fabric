@@ -4,7 +4,7 @@
 {{template "head" .}}
 <title>{{if .IsNew}}Новая игра{{else}}Редактирование игры{{end}}</title>
 </head>
-<body>
+<body data-theme="{{.Theme}}">
 <main class="page">
 <p><a href="/admin/games">← Игры</a></p>
 <h1>{{if .IsNew}}Новая игра{{else}}Редактирование: {{.Form.Title}}{{end}}</h1>
