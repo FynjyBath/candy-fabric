@@ -135,6 +135,7 @@ function initBoard(opts) {
 			col.className = "team-col";
 			const h = document.createElement("h3");
 			h.textContent = team.name;
+			h.title = team.name;
 			col.appendChild(h);
 			const stats = document.createElement("div");
 			stats.className = "stats";
@@ -181,6 +182,7 @@ function initBoard(opts) {
 			const label = document.createElement("div");
 			label.className = "bar-label";
 			label.textContent = team.name;
+			label.title = team.name;
 			const track = document.createElement("div");
 			track.className = "bar-track";
 			const bar = document.createElement("div");

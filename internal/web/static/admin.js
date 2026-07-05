@@ -95,7 +95,13 @@ function adminCellMenu(ev, team, cell, st) {
 
 	document.body.appendChild(menu);
 	const rect = ev.currentTarget.getBoundingClientRect();
-	menu.style.left = window.scrollX + rect.left + "px";
+	// Не выпускаем меню за края окна.
+	let left = rect.left;
+	const menuWidth = menu.offsetWidth || 240;
+	if (left + menuWidth > window.innerWidth - 8) {
+		left = Math.max(8, window.innerWidth - menuWidth - 8);
+	}
+	menu.style.left = window.scrollX + left + "px";
 	menu.style.top = window.scrollY + rect.bottom + 4 + "px";
 	ev.stopPropagation();
 	setTimeout(() => document.addEventListener("click", onDocClick), 0);
