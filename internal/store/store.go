@@ -301,8 +301,22 @@ func insertGameConfig(tx *sql.Tx, gameID int64, levels []Level, tasksByLevel [][
 	return nil
 }
 
-// UpdateGameConfig полностью перезаписывает конфигурацию игры в статусе draft.
-func (s *Store) UpdateGameConfig(g *Game, levels []Level, tasksByLevel [][]TaskInput, teams []TeamInput) error {
+// TeamRowInput — строка формы команд: ID > 0 означает существующую команду
+// (обновить на месте, сохранив id и, значит, ссылку на её страницу).
+type TeamRowInput struct {
+	ID                int64
+	Name              string
+	InformaticsUserID int
+	Login             string
+	Password          string
+}
+
+// UpdateGameConfig применяет конфигурацию «диффом»: существующие команды и
+// задачи обновляются на месте (id не меняются — ссылки на страницы команд,
+// события и перестановки остаются валидными), новые вставляются, убранные
+// удаляются. Смена структуры задач (другое n или число задач в уровне)
+// возможна только пока по задачам нет событий и перестановок.
+func (s *Store) UpdateGameConfig(g *Game, levels []Level, tasksByLevel [][]TaskInput, teams []TeamRowInput) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
@@ -312,26 +326,205 @@ func (s *Store) UpdateGameConfig(g *Game, levels []Level, tasksByLevel [][]TaskI
 		g.Title, g.N, g.StartAmount, g.StartSpeed, g.DurationSec, fmtTimePtr(g.StartAt), g.ID); err != nil {
 		return err
 	}
-	for _, q := range []string{
-		`DELETE FROM team_task_order WHERE team_id IN (SELECT id FROM teams WHERE game_id=?)`,
-		`DELETE FROM game_levels WHERE game_id=?`,
-		`DELETE FROM game_tasks WHERE game_id=?`,
-		`DELETE FROM teams WHERE game_id=?`,
-	} {
-		if _, err := tx.Exec(q, g.ID); err != nil {
+
+	// Уровни: на них никто не ссылается — просто перезаписываем.
+	if _, err := tx.Exec(`DELETE FROM game_levels WHERE game_id=?`, g.ID); err != nil {
+		return err
+	}
+	for _, l := range levels {
+		if _, err := tx.Exec(`INSERT INTO game_levels(game_id, level, task_cost, test_cost, load, amount_bonus, speed_bonus)
+			VALUES(?,?,?,?,?,?,?)`, g.ID, l.Level, l.TaskCost, l.TestCost, l.Load, l.AmountBonus, l.SpeedBonus); err != nil {
 			return err
 		}
 	}
-	if err := insertGameConfig(tx, g.ID, levels, tasksByLevel, teams); err != nil {
+
+	if err := updateTasksDiff(tx, g.ID, tasksByLevel); err != nil {
 		return err
 	}
+	if err := updateTeamsDiff(tx, g.ID, teams); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.orderDone[g.ID] = false // конфигурация переписана — перестановки удалены
+	s.orderDone[g.ID] = false // могли добавиться команды без перестановок
 	s.mu.Unlock()
 	s.Bump(g.ID)
+	return nil
+}
+
+// updateTasksDiff обновляет задачи. Если структура (уровни × позиции)
+// совпадает со старой — chapterid/url меняются на месте с сохранением id.
+// Иначе задачи пересоздаются, что допустимо лишь без событий и перестановок.
+func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error {
+	rows, err := tx.Query(`SELECT id, level, ord, chapter_id, url FROM game_tasks
+		WHERE game_id=? ORDER BY level, ord`, gameID)
+	if err != nil {
+		return err
+	}
+	old := map[[2]int]Task{} // (level, ord) -> задача
+	oldCount := 0
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(&t.ID, &t.Level, &t.Ord, &t.ChapterID, &t.URL); err != nil {
+			rows.Close()
+			return err
+		}
+		old[[2]int{t.Level, t.Ord}] = t
+		oldCount++
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	sameShape := true
+	newCount := 0
+	for li, row := range tasksByLevel {
+		newCount += len(row)
+		for oi := range row {
+			if _, ok := old[[2]int{li + 1, oi + 1}]; !ok {
+				sameShape = false
+			}
+		}
+	}
+	if newCount != oldCount {
+		sameShape = false
+	}
+
+	if !sameShape {
+		// Пересоздание: допустимо только пока задачи «не в игре».
+		var refs int
+		if err := tx.QueryRow(`SELECT
+			(SELECT COUNT(*) FROM events WHERE game_id=? AND task_id IS NOT NULL) +
+			(SELECT COUNT(*) FROM team_task_order o JOIN teams t ON t.id=o.team_id WHERE t.game_id=?)`,
+			gameID, gameID).Scan(&refs); err != nil {
+			return err
+		}
+		if refs > 0 {
+			return fmt.Errorf("нельзя менять число уровней или задач: по задачам уже есть события или перестановки")
+		}
+		if _, err := tx.Exec(`DELETE FROM game_tasks WHERE game_id=?`, gameID); err != nil {
+			return err
+		}
+		for li, row := range tasksByLevel {
+			for oi, t := range row {
+				if _, err := tx.Exec(`INSERT INTO game_tasks(game_id, level, ord, chapter_id, url) VALUES(?,?,?,?,?)`,
+					gameID, li+1, oi+1, t.ChapterID, t.URL); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	// Структура прежняя: правим на месте. Двухфазно, чтобы обмен chapterid
+	// между позициями не упирался в UNIQUE(game_id, chapter_id).
+	type change struct {
+		id        int64
+		chapterID int
+		url       string
+	}
+	var changes []change
+	for li, row := range tasksByLevel {
+		for oi, t := range row {
+			o := old[[2]int{li + 1, oi + 1}]
+			if o.ChapterID != t.ChapterID || o.URL != t.URL {
+				changes = append(changes, change{o.ID, t.ChapterID, t.URL})
+			}
+		}
+	}
+	for _, c := range changes {
+		if _, err := tx.Exec(`UPDATE game_tasks SET chapter_id=? WHERE id=?`, -c.id, c.id); err != nil {
+			return err
+		}
+	}
+	for _, c := range changes {
+		if _, err := tx.Exec(`UPDATE game_tasks SET chapter_id=?, url=? WHERE id=?`, c.chapterID, c.url, c.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateTeamsDiff обновляет команды: с ID — на месте, без ID — вставка,
+// отсутствующие в форме — удаление (только если по команде нет событий).
+func updateTeamsDiff(tx *sql.Tx, gameID int64, teams []TeamRowInput) error {
+	rows, err := tx.Query(`SELECT id, login FROM teams WHERE game_id=?`, gameID)
+	if err != nil {
+		return err
+	}
+	oldLogins := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var login string
+		if err := rows.Scan(&id, &login); err != nil {
+			rows.Close()
+			return err
+		}
+		oldLogins[id] = login
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	submitted := map[int64]bool{}
+	for _, t := range teams {
+		if t.ID > 0 {
+			if _, ok := oldLogins[t.ID]; !ok {
+				return fmt.Errorf("команда %d не принадлежит этой игре", t.ID)
+			}
+			submitted[t.ID] = true
+		}
+	}
+	// Удаления.
+	for id := range oldLogins {
+		if submitted[id] {
+			continue
+		}
+		var refs int
+		if err := tx.QueryRow(`SELECT
+			(SELECT COUNT(*) FROM events WHERE team_id=?) +
+			(SELECT COUNT(*) FROM anomalies WHERE team_id=?)`, id, id).Scan(&refs); err != nil {
+			return err
+		}
+		if refs > 0 {
+			return fmt.Errorf("нельзя удалить команду «%s»: по ней уже есть события или аномалии", oldLogins[id])
+		}
+		if _, err := tx.Exec(`DELETE FROM team_task_order WHERE team_id=?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM teams WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	// Фаза 1: временные логины изменившимся, чтобы обмен логинами между
+	// командами не упирался в UNIQUE(game_id, login).
+	for _, t := range teams {
+		if t.ID > 0 && oldLogins[t.ID] != t.Login {
+			if _, err := tx.Exec(`UPDATE teams SET login=? WHERE id=?`,
+				fmt.Sprintf("\x00tmp-%d", t.ID), t.ID); err != nil {
+				return err
+			}
+		}
+	}
+	// Фаза 2: обновления и вставки.
+	for _, t := range teams {
+		if t.ID > 0 {
+			if _, err := tx.Exec(`UPDATE teams SET name=?, informatics_user_id=?, login=?, password=? WHERE id=?`,
+				t.Name, t.InformaticsUserID, t.Login, t.Password, t.ID); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(`INSERT INTO teams(game_id, name, informatics_user_id, login, password) VALUES(?,?,?,?,?)`,
+				gameID, t.Name, t.InformaticsUserID, t.Login, t.Password); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -542,21 +735,18 @@ func (s *Store) EnsureTaskOrder(gameID int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	// Проверка внутри транзакции: пул из одного соединения сериализует
-	// транзакции, поэтому второй конкурентный вызов увидит уже вставленные
-	// строки и выйдет, не ломая перестановку.
-	var cnt int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM team_task_order
-		WHERE team_id IN (SELECT id FROM teams WHERE game_id=?)`, gameID).Scan(&cnt); err != nil {
-		return err
-	}
-	if cnt > 0 {
-		s.mu.Lock()
-		s.orderDone[gameID] = true
-		s.mu.Unlock()
-		return nil
-	}
+	// Проверка по каждой команде внутри транзакции (пул из одного соединения
+	// сериализует транзакции — конкурентный вызов не продублирует вставку).
+	// Отдельная команда без перестановки бывает, если её добавили в игру
+	// после старта: генерируем только для неё, чужие порядки не трогаем.
 	for _, team := range teams {
+		var cnt int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM team_task_order WHERE team_id=?`, team.ID).Scan(&cnt); err != nil {
+			return err
+		}
+		if cnt > 0 {
+			continue
+		}
 		for lvl := 1; lvl <= maxLevel; lvl++ {
 			row := byLevel[lvl]
 			n := len(row)

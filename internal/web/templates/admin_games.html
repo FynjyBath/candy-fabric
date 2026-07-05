@@ -26,6 +26,12 @@
 	<td>{{.Remaining}}</td>
 	<td class="actions">
 		<a class="button" href="/admin/g/{{.ID}}">Открыть</a>
+		{{if eq .StatusNow "draft"}}
+		<form method="post" action="/admin/g/{{.ID}}/delay-start" class="inline">
+			<input type="hidden" name="csrf" value="{{$.CSRF}}">
+			<button type="submit" class="secondary" title="отложить плановый старт (или назначить его через 5 минут)">+5 мин до старта</button>
+		</form>
+		{{end}}
 		{{if ne .StatusNow "archived"}}
 		<form method="post" action="/admin/g/{{.ID}}/archive" class="inline"
 			onsubmit="return confirm('Отправить игру в архив?')">

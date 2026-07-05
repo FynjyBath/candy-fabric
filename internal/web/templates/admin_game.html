@@ -19,8 +19,10 @@
 </div>
 
 <p class="actions">
-	{{if eq .StatusNow "draft"}}
+	{{if ne .StatusNow "archived"}}
 	<a class="button" href="/admin/g/{{.Game.ID}}/edit">Редактировать конфигурацию</a>
+	{{end}}
+	{{if eq .StatusNow "draft"}}
 	<form method="post" action="/admin/g/{{.Game.ID}}/start" class="inline"
 		onsubmit="return confirm('Стартовать игру сейчас?')">
 		<input type="hidden" name="csrf" value="{{.CSRF}}">

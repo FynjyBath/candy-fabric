@@ -51,8 +51,10 @@ document.getElementById("n-input").addEventListener("change", syncLevels);
 document.getElementById("add-team").addEventListener("click", () => {
 	const table = document.getElementById("teams-table");
 	const tr = document.createElement("tr");
+	// team_id пустой = новая команда; поле обязано быть в каждой строке,
+	// иначе параллельные массивы формы разъедутся.
 	tr.innerHTML = `
-		<td><input name="team_name"></td>
+		<td><input type="hidden" name="team_id" value=""><input name="team_name"></td>
 		<td><input name="team_user_id" type="number" min="1"></td>
 		<td><input name="team_login"></td>
 		<td><input name="team_password"></td>

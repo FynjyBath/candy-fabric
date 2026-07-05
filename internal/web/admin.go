@@ -25,6 +25,7 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/g/{gameId}/edit", s.adminGate(s.handleAdminGameEditSave))
 	mux.HandleFunc("POST /admin/g/{gameId}/start", s.adminGate(s.handleAdminStart))
 	mux.HandleFunc("POST /admin/g/{gameId}/extend", s.adminGate(s.handleAdminExtend))
+	mux.HandleFunc("POST /admin/g/{gameId}/delay-start", s.adminGate(s.handleAdminDelayStart))
 	mux.HandleFunc("POST /admin/g/{gameId}/archive", s.adminGate(s.handleAdminArchive))
 	mux.HandleFunc("POST /admin/g/{gameId}/event", s.adminGate(s.handleAdminEventAdd))
 	mux.HandleFunc("POST /admin/g/{gameId}/event/{eventId}/update", s.adminGate(s.handleAdminEventUpdate))
@@ -157,6 +158,7 @@ type levelForm struct {
 }
 
 type teamForm struct {
+	ID                            string // пусто = новая команда
 	Name, UserID, Login, Password string
 }
 
@@ -209,7 +211,7 @@ func (s *Server) handleAdminGameNew(w http.ResponseWriter, r *http.Request) {
 }
 
 // parseGameForm читает форму и валидирует её; возвращает данные для store.
-func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store.Level, [][]store.TaskInput, []store.TeamInput) {
+func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store.Level, [][]store.TaskInput, []store.TeamRowInput) {
 	f := &gameForm{
 		Title:       strings.TrimSpace(r.FormValue("title")),
 		N:           strings.TrimSpace(r.FormValue("n")),
@@ -298,20 +300,32 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 		}
 		tasksByLevel = append(tasksByLevel, row)
 	}
-	// Команды (минимум 2, логины уникальны).
+	// Команды (минимум 2, логины уникальны). team_id сохраняет привязку к
+	// существующей команде — её ссылка и события не меняются.
+	ids := r.Form["team_id"]
 	names := r.Form["team_name"]
 	userIDs := r.Form["team_user_id"]
 	logins := r.Form["team_login"]
 	passwords := r.Form["team_password"]
-	var teams []store.TeamInput
+	var teams []store.TeamRowInput
 	loginSeen := map[string]bool{}
 	for i := range names {
 		name := strings.TrimSpace(names[i])
 		if name == "" && strings.TrimSpace(get(logins, i)) == "" {
 			continue // пустая строка формы
 		}
-		tf := teamForm{Name: name, UserID: get(userIDs, i), Login: get(logins, i), Password: get(passwords, i)}
+		tf := teamForm{ID: strings.TrimSpace(get(ids, i)), Name: name,
+			UserID: get(userIDs, i), Login: get(logins, i), Password: get(passwords, i)}
 		f.Teams = append(f.Teams, tf)
+		var teamID int64
+		if tf.ID != "" {
+			v, err := strconv.ParseInt(tf.ID, 10, 64)
+			if err != nil || v <= 0 {
+				fail("Команда %q: некорректный идентификатор", name)
+			} else {
+				teamID = v
+			}
+		}
 		if name == "" {
 			fail("Команда %d: укажите имя", i+1)
 		}
@@ -330,7 +344,7 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 		if tf.Password == "" {
 			fail("Команда %q: укажите пароль", name)
 		}
-		teams = append(teams, store.TeamInput{Name: name, InformaticsUserID: uid, Login: login, Password: tf.Password})
+		teams = append(teams, store.TeamRowInput{ID: teamID, Name: name, InformaticsUserID: uid, Login: login, Password: tf.Password})
 	}
 	if len(teams) < 2 {
 		fail("Нужно минимум 2 команды")
@@ -370,7 +384,11 @@ func (s *Server) handleAdminGameCreate(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "admin_game_edit.html", map[string]any{"Form": f, "CSRF": s.csrfToken(r), "IsNew": true})
 		return
 	}
-	id, err := s.store.CreateGame(g, levels, tasks, teams)
+	teamInputs := make([]store.TeamInput, len(teams))
+	for i, t := range teams {
+		teamInputs[i] = store.TeamInput{Name: t.Name, InformaticsUserID: t.InformaticsUserID, Login: t.Login, Password: t.Password}
+	}
+	id, err := s.store.CreateGame(g, levels, tasks, teamInputs)
 	if err != nil {
 		f.Errors = append(f.Errors, "Ошибка сохранения: "+err.Error())
 		s.render(w, "admin_game_edit.html", map[string]any{"Form": f, "CSRF": s.csrfToken(r), "IsNew": true})
@@ -380,14 +398,15 @@ func (s *Server) handleAdminGameCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d", id), http.StatusSeeOther)
 }
 
-// editableGame возвращает игру, если она ещё в статусе draft.
+// editableGame возвращает игру, доступную для редактирования (все, кроме
+// архивных; после старта структура задач защищена на уровне хранилища).
 func (s *Server) editableGame(w http.ResponseWriter, r *http.Request) *store.Game {
 	g := s.gameFromPath(w, r)
 	if g == nil {
 		return nil
 	}
-	if g.Status(time.Now()) != "draft" {
-		http.Error(w, "конфигурация игры после старта не редактируется", http.StatusConflict)
+	if g.Status(time.Now()) == "archived" {
+		http.Error(w, "архивная игра не редактируется", http.StatusConflict)
 		return nil
 	}
 	return g
@@ -425,9 +444,13 @@ func (s *Server) handleAdminGameEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	f.TaskRows = rows
 	for _, t := range teams {
-		f.Teams = append(f.Teams, teamForm{Name: t.Name, UserID: strconv.Itoa(t.InformaticsUserID), Login: t.Login, Password: t.Password})
+		f.Teams = append(f.Teams, teamForm{ID: strconv.FormatInt(t.ID, 10), Name: t.Name,
+			UserID: strconv.Itoa(t.InformaticsUserID), Login: t.Login, Password: t.Password})
 	}
-	s.render(w, "admin_game_edit.html", map[string]any{"Form": f, "CSRF": s.csrfToken(r), "IsNew": false, "Game": g})
+	s.render(w, "admin_game_edit.html", map[string]any{
+		"Form": f, "CSRF": s.csrfToken(r), "IsNew": false, "Game": g,
+		"Started": g.Status(time.Now()) != "draft",
+	})
 }
 
 func (s *Server) handleAdminGameEditSave(w http.ResponseWriter, r *http.Request) {
@@ -441,9 +464,24 @@ func (s *Server) handleAdminGameEditSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ng.ID = g.ID
-	if err := s.store.UpdateGameConfig(ng, levels, tasks, teams); err != nil {
-		f.Errors = append(f.Errors, "Ошибка сохранения: "+err.Error())
-		s.render(w, "admin_game_edit.html", map[string]any{"Form": f, "CSRF": s.csrfToken(r), "IsNew": false, "Game": g})
+	started := g.Status(time.Now()) != "draft"
+	if started {
+		// После старта время старта и структура не меняются через форму:
+		// старт сохраняем прежним, а структурные изменения отклонит хранилище.
+		ng.StartAt = g.StartAt
+		if ng.N != g.N {
+			f.Errors = append(f.Errors, "После старта нельзя менять число уровней n")
+		}
+	}
+	if len(f.Errors) == 0 {
+		if err := s.store.UpdateGameConfig(ng, levels, tasks, teams); err != nil {
+			f.Errors = append(f.Errors, "Ошибка сохранения: "+err.Error())
+		}
+	}
+	if len(f.Errors) > 0 {
+		s.render(w, "admin_game_edit.html", map[string]any{
+			"Form": f, "CSRF": s.csrfToken(r), "IsNew": false, "Game": g, "Started": started,
+		})
 		return
 	}
 	s.logger.Printf("INFO admin: изменена конфигурация игры %d %q", g.ID, ng.Title)
@@ -476,6 +514,30 @@ func (s *Server) handleAdminStart(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminExtend продлевает (или сокращает, при отрицательном значении)
 // игру на произвольное число минут; длительность не может стать меньше минуты.
+// handleAdminDelayStart откладывает старт игры на 5 минут: у черновика с
+// плановым временем — сдвигает его, без планового — назначает через 5 минут.
+func (s *Server) handleAdminDelayStart(w http.ResponseWriter, r *http.Request) {
+	g := s.gameFromPath(w, r)
+	if g == nil {
+		return
+	}
+	if g.Status(time.Now()) != "draft" {
+		http.Error(w, "игра уже стартовала — сдвигать нечего", http.StatusConflict)
+		return
+	}
+	base := time.Now().UTC().Truncate(time.Second)
+	if g.StartAt != nil && g.StartAt.After(base) {
+		base = *g.StartAt
+	}
+	at := base.Add(5 * time.Minute)
+	if err := s.store.SetGameStartAt(g.ID, &at); err != nil {
+		http.Error(w, "ошибка сервера", http.StatusInternalServerError)
+		return
+	}
+	s.logger.Printf("INFO admin: старт игры %d отложен до %s", g.ID, at.Format(time.RFC3339))
+	http.Redirect(w, r, "/admin/games", http.StatusSeeOther)
+}
+
 func (s *Server) handleAdminExtend(w http.ResponseWriter, r *http.Request) {
 	g := s.gameFromPath(w, r)
 	if g == nil {

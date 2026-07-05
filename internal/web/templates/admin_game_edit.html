@@ -24,8 +24,14 @@
 <legend>Основное</legend>
 <label>Название <input name="title" value="{{.Form.Title}}" required size="40"></label>
 <label>Уровней сложности n (2–6)
-	<input name="n" id="n-input" type="number" min="2" max="6" value="{{.Form.N}}" required>
+	<input name="n" id="n-input" type="number" min="2" max="6" value="{{.Form.N}}" required
+		{{if .Started}}readonly title="после старта структура задач не меняется"{{end}}>
 </label>
+{{if .Started}}
+<p class="hint">Игра уже стартовала: число уровней и количество задач менять нельзя,
+ссылки на задачи можно заменять только «на месте» (та же позиция в уровне).
+Плановое время старта игнорируется.</p>
+{{end}}
 <label>Стартовые запасы <input name="start_amount" type="number" min="0" value="{{.Form.StartAmount}}" required></label>
 <label>Стартовая скорость <input name="start_speed" type="number" min="0" value="{{.Form.StartSpeed}}" required></label>
 <label>Длительность, минут <input name="duration_min" type="number" min="1" step="any" value="{{.Form.DurationMin}}" required></label>
@@ -69,7 +75,7 @@
 <tr><th>Имя</th><th>informatics user_id</th><th>Логин</th><th>Пароль</th><th></th></tr>
 {{range .Form.Teams}}
 <tr>
-	<td><input name="team_name" value="{{.Name}}"></td>
+	<td><input type="hidden" name="team_id" value="{{.ID}}"><input name="team_name" value="{{.Name}}"></td>
 	<td><input name="team_user_id" type="number" min="1" value="{{.UserID}}"></td>
 	<td><input name="team_login" value="{{.Login}}"></td>
 	<td><input name="team_password" value="{{.Password}}"></td>

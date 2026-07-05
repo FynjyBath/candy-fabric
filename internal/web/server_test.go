@@ -731,6 +731,288 @@ func TestExtendArbitrary(t *testing.T) {
 	}
 }
 
+// editForm собирает форму редактирования из текущей конфигурации игры.
+func editForm(t *testing.T, st *store.Store, gameID int64, csrf string) url.Values {
+	t.Helper()
+	g, err := st.GetGame(gameID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels, _ := st.GetLevels(gameID)
+	tasks, _ := st.GetTasks(gameID)
+	teams, _ := st.GetTeams(gameID)
+	form := url.Values{
+		"csrf": {csrf}, "title": {g.Title}, "n": {fmt.Sprint(g.N)},
+		"start_amount": {fmt.Sprint(g.StartAmount)},
+		"start_speed":  {fmt.Sprint(g.StartSpeed)},
+		"duration_min": {fmt.Sprint(g.DurationSec / 60)},
+	}
+	for _, l := range levels {
+		form.Set(fmt.Sprintf("task_cost_%d", l.Level), fmt.Sprint(l.TaskCost))
+		form.Set(fmt.Sprintf("test_cost_%d", l.Level), fmt.Sprint(l.TestCost))
+		form.Set(fmt.Sprintf("load_%d", l.Level), fmt.Sprint(l.Load))
+		form.Set(fmt.Sprintf("amount_bonus_%d", l.Level), fmt.Sprint(l.AmountBonus))
+		form.Set(fmt.Sprintf("speed_bonus_%d", l.Level), fmt.Sprint(l.SpeedBonus))
+	}
+	rows := map[int][]string{}
+	for _, task := range tasks {
+		rows[task.Level] = append(rows[task.Level], task.URL)
+	}
+	for lvl, urls := range rows {
+		form.Set(fmt.Sprintf("tasks_%d", lvl), strings.Join(urls, "\n"))
+	}
+	for _, tm := range teams {
+		form.Add("team_id", fmt.Sprint(tm.ID))
+		form.Add("team_name", tm.Name)
+		form.Add("team_user_id", fmt.Sprint(tm.InformaticsUserID))
+		form.Add("team_login", tm.Login)
+		form.Add("team_password", tm.Password)
+	}
+	return form
+}
+
+func postEdit(t *testing.T, ts *httptest.Server, c *http.Client, gameID int64, form url.Values) (string, string) {
+	t.Helper()
+	resp, err := c.PostForm(fmt.Sprintf("%s/admin/g/%d/edit", ts.URL, gameID), form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp.Request.URL.Path, string(body)
+}
+
+// Редактирование конфигурации не меняет id команд и задач: ссылки на страницы
+// команд, сессии и события остаются валидными.
+func TestEditPreservesTeamAndTaskIDs(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+	startGame(t, ts, c, csrf, gameID)
+
+	teamsBefore, _ := st.GetTeams(gameID)
+	tasksBefore, _ := st.GetTasks(gameID)
+	orderBefore, _ := st.GetTaskOrders(gameID)
+
+	// Команда логинится до редактирования.
+	tc, teamPath, _ := teamClient(t, ts, gameID, "alpha", "pa")
+
+	// Правим: название игры, цену уровня 1, имя и пароль первой команды.
+	form := editForm(t, st, gameID, csrf)
+	form.Set("title", "Переименованный турнир")
+	form.Set("task_cost_1", "9000")
+	form["team_name"][0] = "Альфа-Прим"
+	form["team_password"][0] = "newpa"
+	path, body := postEdit(t, ts, c, gameID, form)
+	if !strings.HasPrefix(path, "/admin/g/") || strings.Contains(body, "Ошибки формы") {
+		t.Fatalf("редактирование не сохранилось: %s\n%.500s", path, body)
+	}
+
+	teamsAfter, _ := st.GetTeams(gameID)
+	tasksAfter, _ := st.GetTasks(gameID)
+	orderAfter, _ := st.GetTaskOrders(gameID)
+	if len(teamsAfter) != len(teamsBefore) {
+		t.Fatalf("число команд изменилось: %d -> %d", len(teamsBefore), len(teamsAfter))
+	}
+	for i := range teamsBefore {
+		if teamsAfter[i].ID != teamsBefore[i].ID {
+			t.Errorf("id команды %d изменился: %d -> %d", i, teamsBefore[i].ID, teamsAfter[i].ID)
+		}
+	}
+	if teamsAfter[0].Name != "Альфа-Прим" || teamsAfter[0].Password != "newpa" {
+		t.Errorf("правки команды не применились: %+v", teamsAfter[0])
+	}
+	for i := range tasksBefore {
+		if tasksAfter[i].ID != tasksBefore[i].ID {
+			t.Errorf("id задачи %d изменился: %d -> %d", i, tasksBefore[i].ID, tasksAfter[i].ID)
+		}
+	}
+	// Перестановки не пересоздались.
+	for teamID, cells := range orderBefore {
+		for cell, taskID := range cells {
+			if orderAfter[teamID][cell] != taskID {
+				t.Errorf("перестановка команды %d изменилась в ячейке %d", teamID, cell)
+			}
+		}
+	}
+	// Старая сессия команды продолжает работать (ссылка не «поехала»).
+	resp, _ := tc.Get(ts.URL + teamPath)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("страница команды после редактирования: HTTP %d", resp.StatusCode)
+	}
+	// Новая цена задач видна в состоянии.
+	var pub struct {
+		Levels []struct {
+			TaskCost int64 `json:"task_cost"`
+		} `json:"levels"`
+	}
+	getJSON(t, c, fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID), &pub)
+	if pub.Levels[0].TaskCost != 9000 {
+		t.Errorf("цена уровня 1 = %d, ожидалось 9000", pub.Levels[0].TaskCost)
+	}
+}
+
+// Редактирование во время идущей игры: события выживают, замена ссылки «на
+// месте» сохраняет id задачи, структурные изменения отклоняются.
+func TestEditDuringRunning(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+	startGame(t, ts, c, csrf, gameID)
+
+	teams, _ := st.GetTeams(gameID)
+	tasks, _ := st.GetTasks(gameID)
+	// Событие на первую задачу первой команды.
+	taskID := tasks[0].ID
+	if _, err := st.AddEvent(&store.Event{GameID: gameID, TeamID: teams[0].ID, TaskID: &taskID,
+		Type: "buy_task", At: time.Now().UTC(), Source: "manual", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Замена chapterid первой задачи «на месте».
+	form := editForm(t, st, gameID, csrf)
+	rows := strings.Split(form.Get("tasks_1"), "\n")
+	rows[0] = "https://informatics.msk.ru/mod/statements/view.php?chapterid=90101"
+	form.Set("tasks_1", strings.Join(rows, "\n"))
+	path, body := postEdit(t, ts, c, gameID, form)
+	if strings.Contains(body, "Ошибки формы") {
+		t.Fatalf("замена ссылки на месте должна проходить: %s\n%.500s", path, body)
+	}
+	tasksAfter, _ := st.GetTasks(gameID)
+	if tasksAfter[0].ID != taskID || tasksAfter[0].ChapterID != 90101 {
+		t.Errorf("замена на месте: id %d->%d, chapterid=%d (ожидалось то же id и 90101)",
+			taskID, tasksAfter[0].ID, tasksAfter[0].ChapterID)
+	}
+	events, _ := st.GetEvents(gameID)
+	if len(events) != 1 || *events[0].TaskID != taskID {
+		t.Errorf("событие потерялось после редактирования: %+v", events)
+	}
+	// Ячейка осталась купленной.
+	var pub struct {
+		Teams []struct {
+			ID    int64 `json:"id"`
+			Cells []struct {
+				State string `json:"state"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	getJSON(t, c, fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID), &pub)
+	bought := 0
+	for _, tm := range pub.Teams {
+		for _, cell := range tm.Cells {
+			if cell.State == "bought" {
+				bought++
+			}
+		}
+	}
+	if bought != 1 {
+		t.Errorf("после редактирования куплено %d ячеек, ожидалась 1", bought)
+	}
+
+	// Смена n после старта — ошибка формы.
+	form = editForm(t, st, gameID, csrf)
+	form.Set("n", "2")
+	form.Set("tasks_1", "https://informatics.msk.ru/mod/statements/view.php?chapterid=101\nhttps://informatics.msk.ru/mod/statements/view.php?chapterid=102")
+	form.Set("tasks_2", "https://informatics.msk.ru/mod/statements/view.php?chapterid=201\nhttps://informatics.msk.ru/mod/statements/view.php?chapterid=202")
+	form.Del("tasks_3")
+	_, body = postEdit(t, ts, c, gameID, form)
+	if !strings.Contains(body, "нельзя менять число уровней") {
+		t.Errorf("смена n после старта должна отклоняться с внятной ошибкой")
+	}
+
+	// Удаление команды с событиями — ошибка.
+	form = editForm(t, st, gameID, csrf)
+	form["team_id"] = form["team_id"][1:]
+	form["team_name"] = form["team_name"][1:]
+	form["team_user_id"] = form["team_user_id"][1:]
+	form["team_login"] = form["team_login"][1:]
+	form["team_password"] = form["team_password"][1:]
+	_, body = postEdit(t, ts, c, gameID, form)
+	if !strings.Contains(body, "нельзя удалить команду") {
+		t.Errorf("удаление команды с событиями должно отклоняться")
+	}
+	teamsAfter, _ := st.GetTeams(gameID)
+	if len(teamsAfter) != 3 {
+		t.Errorf("команда всё-таки удалилась: %d", len(teamsAfter))
+	}
+
+	// Добавление команды посреди игры: получает перестановку и ячейки.
+	form = editForm(t, st, gameID, csrf)
+	form.Add("team_id", "")
+	form.Add("team_name", "Дельта")
+	form.Add("team_user_id", "1004")
+	form.Add("team_login", "delta")
+	form.Add("team_password", "pd")
+	_, body = postEdit(t, ts, c, gameID, form)
+	if strings.Contains(body, "Ошибки формы") {
+		t.Fatalf("добавление команды не прошло:\n%.500s", body)
+	}
+	teamsAfter, _ = st.GetTeams(gameID)
+	if len(teamsAfter) != 4 {
+		t.Fatalf("команд %d, ожидалось 4", len(teamsAfter))
+	}
+	// Состояние (оно же материализует перестановку новой команды).
+	getJSON(t, c, fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID), &pub)
+	if len(pub.Teams) != 4 {
+		t.Fatalf("в состоянии %d команд, ожидалось 4", len(pub.Teams))
+	}
+	orders, _ := st.GetTaskOrders(gameID)
+	newTeam := teamsAfter[3]
+	if len(orders[newTeam.ID]) != 9 {
+		t.Errorf("у новой команды %d ячеек перестановки, ожидалось 9", len(orders[newTeam.ID]))
+	}
+	// Перестановки старых команд не тронуты (стабильность).
+	if len(orders[teams[0].ID]) != 9 {
+		t.Errorf("перестановка старой команды повреждена")
+	}
+}
+
+// Кнопка «+5 минут до старта».
+func TestDelayStart(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+
+	delay := func() int {
+		resp, err := c.PostForm(fmt.Sprintf("%s/admin/g/%d/delay-start", ts.URL, gameID),
+			url.Values{"csrf": {csrf}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// Без планового старта: назначается now+5.
+	if code := delay(); code != http.StatusOK {
+		t.Fatalf("delay-start: HTTP %d", code)
+	}
+	g, _ := st.GetGame(gameID)
+	if g.StartAt == nil {
+		t.Fatal("start_at не назначен")
+	}
+	d := time.Until(*g.StartAt)
+	if d < 4*time.Minute || d > 6*time.Minute {
+		t.Errorf("start_at через %v, ожидалось ~5 минут", d)
+	}
+	first := *g.StartAt
+	// Повторное нажатие: +5 от планового.
+	if code := delay(); code != http.StatusOK {
+		t.Fatalf("повторный delay-start: HTTP %d", code)
+	}
+	g, _ = st.GetGame(gameID)
+	if got := g.StartAt.Sub(first); got != 5*time.Minute {
+		t.Errorf("повторный сдвиг = %v, ожидалось 5 минут", got)
+	}
+	// Для стартовавшей игры — 409.
+	startGame(t, ts, c, csrf, gameID)
+	if code := delay(); code != http.StatusConflict {
+		t.Errorf("delay-start после старта: HTTP %d, ожидался 409", code)
+	}
+}
+
 // Неизвестные id — 404.
 func TestNotFound(t *testing.T) {
 	ts, _, _ := testServer(t)
