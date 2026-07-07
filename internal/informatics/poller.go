@@ -157,6 +157,11 @@ func (p *Poller) activeGames() ([]*store.Game, error) {
 	now := time.Now()
 	var out []*store.Game
 	for _, g := range all {
+		// Ручной (математический) режим: информатикс не при чём,
+		// аккаунтов нет — игру не опрашиваем вовсе.
+		if g.Mode == store.ModeManual {
+			continue
+		}
 		switch g.Status(now) {
 		case "running":
 			out = append(out, g)

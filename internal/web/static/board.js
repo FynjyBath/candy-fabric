@@ -324,6 +324,10 @@ function initBoard(opts) {
 		// команды, подписи строк — уровни. Ссылка на условие появляется
 		// после покупки; некупленную задачу команда покупает сама.
 		if (opts.mode === "team") {
+			const hint = document.getElementById("own-hint");
+			if (hint && st.mode === "manual") {
+				hint.textContent = "Задачи выдаёт организатор при покупке; таблица показывает состояние ваших задач и экономику.";
+			}
 			const own = (st.teams || []).find((t) => t.id === opts.teamId);
 			const box = document.getElementById("own-table");
 			if (own && box) {
@@ -342,7 +346,8 @@ function initBoard(opts) {
 						const cell = own.cells[r * n + c];
 						const td = document.createElement("td");
 						td.appendChild(cellDiv(cell, { link: true }));
-						if (running && cell.state === "hidden") {
+						// В ручном режиме покупки вводит организатор.
+						if (running && cell.state === "hidden" && st.mode !== "manual") {
 							const level = st.levels[r] || {};
 							const btn = document.createElement("button");
 							btn.className = "buy-btn";

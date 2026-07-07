@@ -23,6 +23,13 @@
 <fieldset>
 <legend>Основное</legend>
 <label>Название <input name="title" value="{{.Form.Title}}" required size="40"></label>
+<label>Режим
+	<select name="mode" id="mode-input" {{if .Started}}disabled{{end}}>
+		<option value="informatics" {{if ne .Form.Mode "manual"}}selected{{end}}>Informatics (автозачёт решений)</option>
+		<option value="manual" {{if eq .Form.Mode "manual"}}selected{{end}}>Ручной / математический (всё вводит ведущий)</option>
+	</select>
+	{{if .Started}}<input type="hidden" name="mode" value="{{.Form.Mode}}">{{end}}
+</label>
 <label>Уровней сложности n (2–6)
 	<input name="n" id="n-input" type="number" min="2" max="6" value="{{.Form.N}}" required
 		{{if .Started}}readonly title="после старта структура задач не меняется"{{end}}>
@@ -57,8 +64,11 @@
 </table>
 </fieldset>
 
-<fieldset>
+<fieldset id="tasks-fieldset">
 <legend>Задачи (по n ссылок informatics на уровень, по одной в строке)</legend>
+<p class="hint" id="manual-tasks-hint" hidden>В ручном режиме ссылки не нужны:
+будет создано n×n безымянных задач; какая задача в какой ячейке команды —
+видно в меню ячейки на живом табло («уровень, вариант»).</p>
 <div id="tasks-box">
 {{range $i, $row := .Form.TaskRows}}
 <label class="task-row" data-level="{{addOne $i}}">Уровень {{addOne $i}}

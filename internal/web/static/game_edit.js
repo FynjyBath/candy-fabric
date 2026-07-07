@@ -48,6 +48,27 @@ function syncLevels() {
 
 document.getElementById("n-input").addEventListener("change", syncLevels);
 
+// Ручной (математический) режим: ссылки на задачи и informatics user_id
+// не нужны — прячем блок задач и снимаем required-подсказки.
+function syncMode() {
+	const sel = document.getElementById("mode-input");
+	if (!sel) return;
+	const manual = sel.value === "manual";
+	const box = document.getElementById("tasks-box");
+	if (box) box.hidden = manual;
+	const hint = document.getElementById("manual-tasks-hint");
+	if (hint) hint.hidden = !manual;
+	for (const inp of document.querySelectorAll('input[name="team_user_id"]')) {
+		inp.disabled = manual;
+		inp.placeholder = manual ? "не нужен" : "";
+	}
+}
+const modeSel = document.getElementById("mode-input");
+if (modeSel) {
+	modeSel.addEventListener("change", syncMode);
+	syncMode();
+}
+
 document.getElementById("add-team").addEventListener("click", () => {
 	const table = document.getElementById("teams-table");
 	const tr = document.createElement("tr");

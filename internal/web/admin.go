@@ -153,6 +153,7 @@ func fmtDuration(d time.Duration) string {
 // gameForm — сырые значения формы (для повторного показа при ошибках).
 type gameForm struct {
 	Title       string
+	Mode        string // informatics | manual
 	N           string
 	StartAmount string
 	StartSpeed  string
@@ -195,7 +196,8 @@ func defaultLevelParams(n int) []store.Level {
 
 func defaultGameForm() *gameForm {
 	f := &gameForm{
-		Title: "", N: "3", StartAmount: "20000", StartSpeed: "15", DurationMin: "85",
+		Title: "", Mode: store.ModeInformatics,
+		N: "3", StartAmount: "20000", StartSpeed: "15", DurationMin: "85",
 		TaskRows: make([]string, 3),
 		Teams:    []teamForm{{}, {}},
 	}
@@ -226,6 +228,7 @@ func (s *Server) handleAdminGameNew(w http.ResponseWriter, r *http.Request) {
 func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store.Level, [][]store.TaskInput, []store.TeamRowInput) {
 	f := &gameForm{
 		Title:       strings.TrimSpace(r.FormValue("title")),
+		Mode:        strings.TrimSpace(r.FormValue("mode")),
 		N:           strings.TrimSpace(r.FormValue("n")),
 		StartAmount: strings.TrimSpace(r.FormValue("start_amount")),
 		StartSpeed:  strings.TrimSpace(r.FormValue("start_speed")),
@@ -234,6 +237,13 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 	}
 	fail := func(format string, a ...any) {
 		f.Errors = append(f.Errors, fmt.Sprintf(format, a...))
+	}
+	if f.Mode == "" {
+		f.Mode = store.ModeInformatics
+	}
+	manual := f.Mode == store.ModeManual
+	if f.Mode != store.ModeInformatics && f.Mode != store.ModeManual {
+		fail("Неизвестный режим игры")
 	}
 	if f.Title == "" {
 		fail("Укажите название игры")
@@ -278,10 +288,22 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 			SpeedBonus:  parse(lf.SpeedBonus, "бонус к скорости"),
 		})
 	}
-	// Задачи: n текстариев по n ссылок (нормализация по разделу 6).
-	seen := map[int]string{}
+	// Задачи. В ручном (математическом) режиме ссылок нет: генерируются
+	// n×n плейсхолдеров с синтетическими отрицательными chapterid —
+	// они уникальны в игре и никогда не совпадут с реальной посылкой.
 	var tasksByLevel [][]store.TaskInput
-	for lvl := 1; lvl <= n; lvl++ {
+	if manual {
+		for lvl := 1; lvl <= n; lvl++ {
+			var row []store.TaskInput
+			for i := 1; i <= n; i++ {
+				row = append(row, store.TaskInput{ChapterID: -(lvl*1000 + i), URL: ""})
+			}
+			tasksByLevel = append(tasksByLevel, row)
+		}
+		f.TaskRows = make([]string, n)
+	}
+	seen := map[int]string{}
+	for lvl := 1; manual == false && lvl <= n; lvl++ {
 		raw := r.FormValue(fmt.Sprintf("tasks_%d", lvl))
 		f.TaskRows = append(f.TaskRows, raw)
 		var row []store.TaskInput
@@ -341,9 +363,15 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 		if name == "" {
 			fail("Команда %d: укажите имя", i+1)
 		}
-		uid, err := strconv.Atoi(strings.TrimSpace(tf.UserID))
-		if err != nil || uid <= 0 {
-			fail("Команда %q: informatics user_id должен быть положительным целым", name)
+		// В ручном режиме аккаунт информатикса не нужен.
+		uid := 0
+		if !manual {
+			v, err := strconv.Atoi(strings.TrimSpace(tf.UserID))
+			if err != nil || v <= 0 {
+				fail("Команда %q: informatics user_id должен быть положительным целым", name)
+			} else {
+				uid = v
+			}
 		}
 		login := strings.TrimSpace(tf.Login)
 		if login == "" {
@@ -368,6 +396,7 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 	}
 	g := &store.Game{
 		Title:       f.Title,
+		Mode:        f.Mode,
 		N:           n,
 		StartAmount: startAmount,
 		StartSpeed:  startSpeed,
@@ -434,6 +463,7 @@ func (s *Server) handleAdminGameEdit(w http.ResponseWriter, r *http.Request) {
 	teams, _ := s.store.GetTeams(g.ID)
 	f := &gameForm{
 		Title:       g.Title,
+		Mode:        g.Mode,
 		N:           strconv.Itoa(g.N),
 		StartAmount: strconv.FormatInt(g.StartAmount, 10),
 		StartSpeed:  strconv.FormatInt(g.StartSpeed, 10),
@@ -446,12 +476,14 @@ func (s *Server) handleAdminGameEdit(w http.ResponseWriter, r *http.Request) {
 		f.Levels = append(f.Levels, levelFormFromStore(l))
 	}
 	rows := make([]string, g.N)
-	for _, t := range tasks {
-		if t.Level >= 1 && t.Level <= g.N {
-			if rows[t.Level-1] != "" {
-				rows[t.Level-1] += "\n"
+	if g.Mode != store.ModeManual {
+		for _, t := range tasks {
+			if t.Level >= 1 && t.Level <= g.N {
+				if rows[t.Level-1] != "" {
+					rows[t.Level-1] += "\n"
+				}
+				rows[t.Level-1] += t.URL
 			}
-			rows[t.Level-1] += t.URL
 		}
 	}
 	f.TaskRows = rows
@@ -470,19 +502,27 @@ func (s *Server) handleAdminGameEditSave(w http.ResponseWriter, r *http.Request)
 	if g == nil {
 		return
 	}
-	f, ng, levels, tasks, teams := s.parseGameForm(r)
-	if len(f.Errors) > 0 {
-		s.render(w, "admin_game_edit.html", map[string]any{"Form": f, "CSRF": s.csrfToken(r), "IsNew": false, "Game": g})
-		return
+	// Отсутствующее поле mode (curl/устаревшая форма) не должно молча
+	// переводить игру в режим по умолчанию — подставляем текущий до разбора,
+	// чтобы валидация задач шла по правильному режиму.
+	_ = r.ParseForm()
+	if strings.TrimSpace(r.FormValue("mode")) == "" {
+		r.Form.Set("mode", g.Mode)
 	}
+	f, ng, levels, tasks, teams := s.parseGameForm(r)
 	ng.ID = g.ID
 	started := g.Status(time.Now()) != "draft"
 	if started {
 		// После старта время старта и структура не меняются через форму:
-		// старт сохраняем прежним, а структурные изменения отклонит хранилище.
+		// старт сохраняем прежним, а структурные изменения отклоняются
+		// до прочих ошибок — иначе пользователь увидит запутанные ошибки
+		// про ссылки вместо настоящей причины.
 		ng.StartAt = g.StartAt
+		if ng.Mode != g.Mode {
+			f.Errors = append([]string{"После старта нельзя менять режим игры"}, f.Errors...)
+		}
 		if ng.N != g.N {
-			f.Errors = append(f.Errors, "После старта нельзя менять число уровней n")
+			f.Errors = append([]string{"После старта нельзя менять число уровней n"}, f.Errors...)
 		}
 	}
 	if len(f.Errors) == 0 {
@@ -621,7 +661,7 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 	type eventRow struct {
 		*store.Event
 		TeamName  string
-		ChapterID int
+		TaskLabel string
 		TypeRu    string
 	}
 	typeRu := map[string]string{"buy_task": "покупка задачи", "buy_test": "покупка теста", "solve": "решение"}
@@ -633,7 +673,7 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 		}
 		if e.TaskID != nil {
 			if t, ok := taskByID[*e.TaskID]; ok {
-				er.ChapterID = t.ChapterID
+				er.TaskLabel = taskLabel(t)
 			}
 		}
 		eventRows = append(eventRows, er)
@@ -641,7 +681,7 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 	type anomalyRow struct {
 		*store.Anomaly
 		TeamName  string
-		ChapterID int
+		TaskLabel string
 		ReasonRu  string
 	}
 	reasonRu := map[string]string{
@@ -656,7 +696,7 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 			ar.TeamName = t.Name
 		}
 		if t, ok := taskByID[a.TaskID]; ok {
-			ar.ChapterID = t.ChapterID
+			ar.TaskLabel = taskLabel(t)
 		}
 		anomalyRows = append(anomalyRows, ar)
 	}
@@ -669,12 +709,25 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 	for _, wrn := range snap.Result.Warnings {
 		warns = append(warns, warnRow{wrn.EventID, wrn.Text})
 	}
+	type taskRow struct {
+		store.Task
+		Label string
+	}
+	var taskRows []taskRow
+	for _, t := range snap.Tasks {
+		taskRows = append(taskRows, taskRow{t, taskLabel(t)})
+	}
 	pollerErr, pollerErrAt := s.PollerError()
+	if g.Mode == store.ModeManual {
+		// Ручная игра к информатиксу отношения не имеет — баннер ошибок
+		// опросчика на её странице только путает.
+		pollerErr, pollerErrAt = "", time.Time{}
+	}
 	s.render(w, "admin_game.html", map[string]any{
 		"Game":        g,
 		"StatusNow":   snap.Status,
 		"Teams":       teams,
-		"Tasks":       snap.Tasks,
+		"Tasks":       taskRows,
 		"Events":      eventRows,
 		"Anomalies":   anomalyRows,
 		"Warnings":    warns,
@@ -698,6 +751,9 @@ func (s *Server) handleAdminState(w http.ResponseWriter, r *http.Request) {
 	}
 	st := s.buildState(snap, "admin", 0)
 	pollerErr, pollerErrAt := s.PollerError()
+	if g.Mode == store.ModeManual {
+		pollerErr, pollerErrAt = "", time.Time{}
+	}
 	writeJSON(w, map[string]any{
 		"state":         st,
 		"poller_error":  pollerErr,
@@ -1040,4 +1096,13 @@ func (s *Server) handleAdminTeamPassword(w http.ResponseWriter, r *http.Request)
 	}
 	s.logger.Printf("INFO admin: сменён пароль команды %d (игра %d)", teamID, g.ID)
 	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d", g.ID), http.StatusSeeOther)
+}
+
+// taskLabel — человекочитаемое имя задачи для админки: chapterid для
+// informatics-игр, «уровень/вариант» для ручного режима.
+func taskLabel(t store.Task) string {
+	if t.ChapterID > 0 {
+		return fmt.Sprintf("%d (уровень %d)", t.ChapterID, t.Level)
+	}
+	return fmt.Sprintf("уровень %d, вариант %d", t.Level, t.Ord)
 }

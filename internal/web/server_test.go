@@ -254,8 +254,10 @@ func TestPublicStateHasNoLinks(t *testing.T) {
 	resp, _ := http.Get(fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID))
 	raw, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if strings.Contains(string(raw), "informatics") || strings.Contains(string(raw), "chapterid") ||
-		strings.Contains(string(raw), "url") {
+	// Поле mode легитимно содержит слово "informatics" — проверяем именно
+	// следы ссылок и идентификаторов задач.
+	if strings.Contains(string(raw), "informatics.msk") || strings.Contains(string(raw), "chapterid") ||
+		strings.Contains(string(raw), `"url"`) || strings.Contains(string(raw), "statements") {
 		t.Errorf("публичный JSON содержит следы ссылок:\n%s", raw)
 	}
 	// Публичная HTML-страница тоже без ссылок на задачи.
@@ -1075,6 +1077,239 @@ func TestSiteTheme(t *testing.T) {
 	}
 	if th := pageTheme(http.DefaultClient, ts.URL+"/"); th != "hamster" {
 		t.Errorf("тема сбилась после неудачных попыток: %q", th)
+	}
+}
+
+// createManualGame создаёт игру в ручном (математическом) режиме: без ссылок
+// и informatics user_id.
+func createManualGame(t *testing.T, ts *httptest.Server, c *http.Client, csrf string) int64 {
+	t.Helper()
+	form := url.Values{
+		"csrf": {csrf}, "title": {"Матбой"}, "mode": {"manual"}, "n": {"2"},
+		"start_amount": {"20000"}, "start_speed": {"15"}, "duration_min": {"85"},
+		"team_id":       {"", ""},
+		"team_name":     {"Синусы", "Косинусы"},
+		"team_user_id":  {"", ""},
+		"team_login":    {"sin", "cos"},
+		"team_password": {"p1", "p2"},
+	}
+	for lvl := 1; lvl <= 2; lvl++ {
+		form.Set(fmt.Sprintf("task_cost_%d", lvl), "1000")
+		form.Set(fmt.Sprintf("test_cost_%d", lvl), "500")
+		form.Set(fmt.Sprintf("load_%d", lvl), "1")
+		form.Set(fmt.Sprintf("amount_bonus_%d", lvl), "2000")
+		form.Set(fmt.Sprintf("speed_bonus_%d", lvl), "1")
+	}
+	resp, err := c.PostForm(ts.URL+"/admin/games/new", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.HasPrefix(resp.Request.URL.Path, "/admin/g/") {
+		t.Fatalf("ручная игра не создана: %s\n%.700s", resp.Request.URL.Path, body)
+	}
+	var id int64
+	fmt.Sscanf(strings.TrimPrefix(resp.Request.URL.Path, "/admin/g/"), "%d", &id)
+	return id
+}
+
+// Ручной (математический) режим: без ссылок, без user_id, self-buy запрещён,
+// полный цикл купить→решить через админку работает.
+func TestManualMode(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGame(t, ts, c, csrf)
+
+	// Задачи-плейсхолдеры: 4 штуки, отрицательные chapterid, без URL.
+	tasks, _ := st.GetTasks(gameID)
+	if len(tasks) != 4 {
+		t.Fatalf("задач %d, ожидалось 4", len(tasks))
+	}
+	for _, task := range tasks {
+		if task.ChapterID >= 0 || task.URL != "" {
+			t.Errorf("плейсхолдер: chapterid=%d url=%q — ожидались отрицательный id и пустой URL", task.ChapterID, task.URL)
+		}
+	}
+	g, _ := st.GetGame(gameID)
+	if g.Mode != store.ModeManual {
+		t.Fatalf("mode = %q", g.Mode)
+	}
+
+	startGame(t, ts, c, csrf, gameID)
+
+	// Публичный и командный state: mode=manual, никаких url/chapterid.
+	resp, _ := http.Get(fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID))
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(raw), `"mode":"manual"`) {
+		t.Errorf("в публичном state нет mode=manual")
+	}
+	tc, teamPath, teamCSRF := teamClient(t, ts, gameID, "sin", "p1")
+	resp, _ = tc.Get(ts.URL + "/api" + teamPath + "/state")
+	raw, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.Contains(string(raw), `"url"`) || strings.Contains(string(raw), "chapter_id") {
+		t.Errorf("командный state ручной игры содержит ссылки/chapterid:\n%s", raw)
+	}
+
+	// Самостоятельная покупка запрещена.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/buy",
+		strings.NewReader("cell=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", teamCSRF)
+	resp, _ = tc.Do(req)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "организатор") {
+		t.Errorf("self-buy в ручном режиме: HTTP %d %s, ожидался 409 с понятной ошибкой", resp.StatusCode, body)
+	}
+
+	// Полный цикл через админку: купить → решить, бонусы применяются.
+	teams, _ := st.GetTeams(gameID)
+	taskID := tasks[0].ID
+	for _, typ := range []string{"buy_task", "solve"} {
+		resp, err := c.PostForm(fmt.Sprintf("%s/admin/g/%d/event", ts.URL, gameID), url.Values{
+			"csrf": {csrf}, "team_id": {fmt.Sprint(teams[0].ID)},
+			"task_id": {fmt.Sprint(taskID)}, "type": {typ}, "confirmed": {"1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	var pub struct {
+		Teams []struct {
+			ID    int64 `json:"id"`
+			Speed int64 `json:"speed"`
+			Cells []struct {
+				State string `json:"state"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	getJSON(t, c, fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID), &pub)
+	passed := 0
+	for _, tm := range pub.Teams {
+		for _, cell := range tm.Cells {
+			if cell.State == "passed" {
+				passed++
+			}
+		}
+	}
+	if passed != 1 {
+		t.Errorf("решённых ячеек %d, ожидалась 1", passed)
+	}
+	// Скорость: 15 - 1 (load) + 1 (load назад) + 1 (бонус) = 16.
+	for _, tm := range pub.Teams {
+		if tm.ID == teams[0].ID && tm.Speed != 16 {
+			t.Errorf("скорость после решения %d, ожидалось 16", tm.Speed)
+		}
+	}
+
+	// Админский state содержит уровень и вариант, но не chapterid/url.
+	var adminState struct {
+		State struct {
+			Teams []struct {
+				Cells []struct {
+					TaskID    int64  `json:"task_id"`
+					Level     int    `json:"level"`
+					Ord       int    `json:"ord"`
+					ChapterID int    `json:"chapter_id"`
+					URL       string `json:"url"`
+				} `json:"cells"`
+			} `json:"teams"`
+		} `json:"state"`
+	}
+	getJSON(t, c, fmt.Sprintf("%s/admin/api/g/%d/state", ts.URL, gameID), &adminState)
+	cell := adminState.State.Teams[0].Cells[0]
+	if cell.TaskID == 0 || cell.Level == 0 || cell.Ord == 0 {
+		t.Errorf("админская ячейка без task_id/level/ord: %+v", cell)
+	}
+	if cell.ChapterID != 0 || cell.URL != "" {
+		t.Errorf("админская ячейка ручной игры содержит chapterid/url: %+v", cell)
+	}
+
+	// Метки задач в админке: «уровень, вариант», без отрицательных чисел.
+	resp, _ = c.Get(fmt.Sprintf("%s/admin/g/%d", ts.URL, gameID))
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(page), "уровень 1, вариант") {
+		t.Errorf("на странице админки нет меток «уровень, вариант»")
+	}
+	if strings.Contains(string(page), "-1001") {
+		t.Errorf("на странице админки виден синтетический chapterid")
+	}
+
+	// Смена режима после старта запрещена.
+	form := editForm(t, st, gameID, csrf)
+	form.Set("mode", "informatics")
+	form.Set("tasks_1", "https://informatics.msk.ru/mod/statements/view.php?chapterid=1\nhttps://informatics.msk.ru/mod/statements/view.php?chapterid=2")
+	form.Set("tasks_2", "https://informatics.msk.ru/mod/statements/view.php?chapterid=3\nhttps://informatics.msk.ru/mod/statements/view.php?chapterid=4")
+	_, body2 := postEdit(t, ts, c, gameID, form)
+	if !strings.Contains(body2, "нельзя менять режим") {
+		t.Errorf("смена режима после старта должна отклоняться")
+	}
+}
+
+// Отсутствие поля mode в форме (curl/устаревшая форма) не должно молча
+// переводить черновик из ручного режима в informatics.
+func TestManualModeMissingFieldKeepsMode(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGame(t, ts, c, csrf) // черновик, режим manual
+
+	form := editForm(t, st, gameID, csrf)
+	form.Del("mode") // поле отсутствует
+	form.Set("title", "Без поля режима")
+	form.Set("tasks_1", "")
+	form.Set("tasks_2", "")
+	path, body := postEdit(t, ts, c, gameID, form)
+	if strings.Contains(body, "Ошибки формы") {
+		t.Fatalf("сохранение не прошло: %s\n%.400s", path, body)
+	}
+	g, _ := st.GetGame(gameID)
+	if g.Mode != store.ModeManual {
+		t.Errorf("режим сменился на %q при отсутствии поля mode, ожидался manual", g.Mode)
+	}
+	// Плейсхолдеры не заменены ссылками.
+	tasks, _ := st.GetTasks(gameID)
+	for _, task := range tasks {
+		if task.ChapterID >= 0 {
+			t.Errorf("плейсхолдер заменён: chapterid=%d", task.ChapterID)
+		}
+	}
+}
+
+// Редактирование ручной игры (в т. ч. после старта) не требует ссылок и
+// сохраняет плейсхолдеры.
+func TestManualModeEdit(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGame(t, ts, c, csrf)
+	startGame(t, ts, c, csrf, gameID)
+
+	tasksBefore, _ := st.GetTasks(gameID)
+	form := editForm(t, st, gameID, csrf)
+	form.Set("mode", "manual")
+	form.Set("title", "Матбой-финал")
+	form.Set("task_cost_1", "2000")
+	// tasks_1/tasks_2 в форме пустые (editForm собрал пустые URL) — ок.
+	form.Set("tasks_1", "")
+	form.Set("tasks_2", "")
+	path, body := postEdit(t, ts, c, gameID, form)
+	if strings.Contains(body, "Ошибки формы") {
+		t.Fatalf("редактирование ручной игры не прошло: %s\n%.500s", path, body)
+	}
+	tasksAfter, _ := st.GetTasks(gameID)
+	for i := range tasksBefore {
+		if tasksAfter[i].ID != tasksBefore[i].ID || tasksAfter[i].ChapterID != tasksBefore[i].ChapterID {
+			t.Errorf("плейсхолдер %d изменился: %+v -> %+v", i, tasksBefore[i], tasksAfter[i])
+		}
+	}
+	g, _ := st.GetGame(gameID)
+	if g.Title != "Матбой-финал" {
+		t.Errorf("правка названия не применилась")
 	}
 }
 

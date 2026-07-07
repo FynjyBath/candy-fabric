@@ -58,6 +58,11 @@ function adminCellMenu(ev, team, cell, st) {
 		a.textContent = `chapterid=${cell.chapter_id}`;
 		title.appendChild(a);
 		title.appendChild(document.createTextNode(` (уровень ${cell.level})`));
+	} else if (cell.task_id) {
+		// Ручной режим: задача без ссылки, организатор опознаёт её по
+		// уровню и варианту (исходной позиции в уровне).
+		title.appendChild(document.createTextNode(
+			`Задача: уровень ${cell.level}, вариант ${cell.ord}`));
 	} else {
 		title.appendChild(document.createTextNode("Задача не назначена (игра не стартовала)"));
 	}

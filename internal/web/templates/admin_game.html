@@ -85,7 +85,7 @@
 	<tr>
 		<td>{{localTime .RunAt}}</td>
 		<td>{{.TeamName}}</td>
-		<td>{{.ChapterID}}</td>
+		<td>{{.TaskLabel}}</td>
 		<td>{{.RunID}}</td>
 		<td>{{.ReasonRu}}</td>
 		<td class="actions">
@@ -122,7 +122,7 @@
 		<td>{{.ID}}</td>
 		<td>{{localTime .At}}</td>
 		<td>{{.TeamName}}</td>
-		<td>{{.ChapterID}}</td>
+		<td>{{.TaskLabel}}</td>
 		<td>{{.TypeRu}}</td>
 		<td>{{.Source}}</td>
 		<td>{{if .RunID}}{{.RunID}}{{end}}</td>
@@ -140,7 +140,7 @@
 					</select></label>
 					<label>Задача <select name="task_id">
 						{{$taskID := .TaskID}}
-						{{range $.Tasks}}<option value="{{.ID}}" {{if and $taskID (eq .ID (deref $taskID))}}selected{{end}}>{{.ChapterID}} (уровень {{.Level}})</option>{{end}}
+						{{range $.Tasks}}<option value="{{.ID}}" {{if and $taskID (eq .ID (deref $taskID))}}selected{{end}}>{{.Label}}</option>{{end}}
 					</select></label>
 					<label>Тип <select name="type">
 						{{$type := .Type}}
@@ -171,7 +171,7 @@
 				{{range .Teams}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
 			</select></label>
 			<label>Задача <select name="task_id">
-				{{range .Tasks}}<option value="{{.ID}}">{{.ChapterID}} (уровень {{.Level}})</option>{{end}}
+				{{range .Tasks}}<option value="{{.ID}}">{{.Label}}</option>{{end}}
 			</select></label>
 			<label>Тип <select name="type">
 				<option value="buy_task">покупка задачи</option>

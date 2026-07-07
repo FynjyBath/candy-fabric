@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,7 +26,8 @@ CREATE TABLE IF NOT EXISTS games (
 	start_speed INTEGER NOT NULL,
 	duration_sec INTEGER NOT NULL,
 	start_at TEXT NULL,
-	created_at TEXT NOT NULL
+	created_at TEXT NOT NULL,
+	mode TEXT NOT NULL DEFAULT 'informatics'
 );
 
 CREATE TABLE IF NOT EXISTS game_levels (
@@ -116,8 +118,21 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("миграция схемы: %w", err)
 	}
+	// Миграция существующих БД: колонка режима игры (ошибка «duplicate
+	// column» означает, что колонка уже есть, — это не сбой).
+	if _, err := db.Exec(`ALTER TABLE games ADD COLUMN mode TEXT NOT NULL DEFAULT 'informatics'`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("миграция mode: %w", err)
+	}
 	return &Store{DB: db, versions: map[int64]int64{}, orderDone: map[int64]bool{}}, nil
 }
+
+// Режимы игры.
+const (
+	ModeInformatics = "informatics" // решения подтягиваются с информатикса
+	ModeManual      = "manual"      // математический конкурс: всё вводит ведущий
+)
 
 func (s *Store) Close() error { return s.DB.Close() }
 
@@ -147,6 +162,7 @@ type Game struct {
 	DurationSec int64
 	StartAt     *time.Time
 	CreatedAt   time.Time
+	Mode        string // informatics | manual
 }
 
 // Status — вычислимая функция времени (раздел 3.4).
@@ -248,9 +264,12 @@ func (s *Store) CreateGame(g *Game, levels []Level, tasksByLevel [][]TaskInput, 
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT INTO games(title, status_archived, n, start_amount, start_speed, duration_sec, start_at, created_at)
-		VALUES(?,0,?,?,?,?,?,?)`,
-		g.Title, g.N, g.StartAmount, g.StartSpeed, g.DurationSec, fmtTimePtr(g.StartAt), fmtTime(time.Now()))
+	if g.Mode == "" {
+		g.Mode = ModeInformatics
+	}
+	res, err := tx.Exec(`INSERT INTO games(title, status_archived, n, start_amount, start_speed, duration_sec, start_at, created_at, mode)
+		VALUES(?,0,?,?,?,?,?,?,?)`,
+		g.Title, g.N, g.StartAmount, g.StartSpeed, g.DurationSec, fmtTimePtr(g.StartAt), fmtTime(time.Now()), g.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -322,8 +341,11 @@ func (s *Store) UpdateGameConfig(g *Game, levels []Level, tasksByLevel [][]TaskI
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE games SET title=?, n=?, start_amount=?, start_speed=?, duration_sec=?, start_at=? WHERE id=?`,
-		g.Title, g.N, g.StartAmount, g.StartSpeed, g.DurationSec, fmtTimePtr(g.StartAt), g.ID); err != nil {
+	if g.Mode == "" {
+		g.Mode = ModeInformatics
+	}
+	if _, err := tx.Exec(`UPDATE games SET title=?, n=?, start_amount=?, start_speed=?, duration_sec=?, start_at=?, mode=? WHERE id=?`,
+		g.Title, g.N, g.StartAmount, g.StartSpeed, g.DurationSec, fmtTimePtr(g.StartAt), g.Mode, g.ID); err != nil {
 		return err
 	}
 
@@ -436,8 +458,12 @@ func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error
 			}
 		}
 	}
+	// Временные значения — в отдельном диапазоне, чтобы не столкнуться ни с
+	// реальными chapterid (> 0), ни с плейсхолдерами ручного режима
+	// (небольшие отрицательные: -(уровень*1000+позиция)).
+	const tmpBase = int64(1_000_000_000)
 	for _, c := range changes {
-		if _, err := tx.Exec(`UPDATE game_tasks SET chapter_id=? WHERE id=?`, -c.id, c.id); err != nil {
+		if _, err := tx.Exec(`UPDATE game_tasks SET chapter_id=? WHERE id=?`, -(tmpBase + c.id), c.id); err != nil {
 			return err
 		}
 	}
@@ -533,7 +559,7 @@ func scanGame(row interface{ Scan(...any) error }) (*Game, error) {
 	var archived int
 	var startAt sql.NullString
 	var createdAt string
-	if err := row.Scan(&g.ID, &g.Title, &archived, &g.N, &g.StartAmount, &g.StartSpeed, &g.DurationSec, &startAt, &createdAt); err != nil {
+	if err := row.Scan(&g.ID, &g.Title, &archived, &g.N, &g.StartAmount, &g.StartSpeed, &g.DurationSec, &startAt, &createdAt, &g.Mode); err != nil {
 		return nil, err
 	}
 	g.Archived = archived != 0
@@ -545,7 +571,7 @@ func scanGame(row interface{ Scan(...any) error }) (*Game, error) {
 	return &g, nil
 }
 
-const gameCols = `id, title, status_archived, n, start_amount, start_speed, duration_sec, start_at, created_at`
+const gameCols = `id, title, status_archived, n, start_amount, start_speed, duration_sec, start_at, created_at, mode`
 
 func (s *Store) GetGame(id int64) (*Game, error) {
 	return scanGame(s.DB.QueryRow(`SELECT `+gameCols+` FROM games WHERE id=?`, id))

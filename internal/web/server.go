@@ -376,6 +376,10 @@ func (s *Server) handleTeamBuy(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
 		return
 	}
+	if g.Mode == store.ModeManual {
+		jsonErr(w, http.StatusConflict, "в этой игре покупки вводит организатор")
+		return
+	}
 	if g.Status(time.Now()) != "running" {
 		jsonErr(w, http.StatusConflict, "покупки доступны только во время игры")
 		return

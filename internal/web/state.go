@@ -100,6 +100,7 @@ func (s *Server) snapshot(g *store.Game) (*gameSnapshot, error) {
 type stateJSON struct {
 	ServerTime     string      `json:"server_time"`
 	Status         string      `json:"status"`
+	Mode           string      `json:"mode"`
 	StartAt        *string     `json:"start_at"`
 	EndAt          *string     `json:"end_at"`
 	N              int         `json:"n"`
@@ -133,6 +134,7 @@ type cellJSON struct {
 	ChapterID int    `json:"chapter_id,omitempty"`
 	TaskID    int64  `json:"task_id,omitempty"`
 	Level     int    `json:"level,omitempty"`
+	Ord       int    `json:"ord,omitempty"` // позиция в уровне (для ручного режима)
 }
 
 // buildState собирает JSON состояния. include: "public" — без ссылок вообще;
@@ -143,6 +145,7 @@ func (s *Server) buildState(snap *gameSnapshot, include string, forTeamID int64)
 	out := &stateJSON{
 		ServerTime:     snap.Now.Format(time.RFC3339),
 		Status:         snap.Status,
+		Mode:           g.Mode,
 		N:              g.N,
 		PageRefreshSec: s.pageRefresh.Seconds(),
 	}
@@ -178,10 +181,15 @@ func (s *Server) buildState(snap *gameSnapshot, include string, forTeamID int64)
 					(include == "team" && tm.ID == forTeamID && cj.State != game.StateHidden)
 				if withDetails {
 					if task, ok := taskByID[taskID]; ok {
-						cj.URL = task.URL
-						cj.ChapterID = task.ChapterID
+						// Синтетические chapterid ручного режима (< 0)
+						// наружу не показываются — у задачи нет ссылки.
+						if task.ChapterID > 0 {
+							cj.URL = task.URL
+							cj.ChapterID = task.ChapterID
+						}
 						cj.TaskID = task.ID
 						cj.Level = task.Level
+						cj.Ord = task.Ord
 					}
 				}
 			}

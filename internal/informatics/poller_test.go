@@ -1,6 +1,7 @@
 package informatics
 
 import (
+	"context"
 	"io"
 	"log"
 	"path/filepath"
@@ -221,6 +222,35 @@ func TestDisabledAutoSolveNotRecreated(t *testing.T) {
 	}
 	if cnt != 1 {
 		t.Errorf("auto-событий %d, ожидалось 1 (без дублей)", cnt)
+	}
+}
+
+// Ручная (математическая) игра не опрашивается вовсе: аккаунтов нет,
+// pollOnce завершает цикл, не притрагиваясь к клиенту (Client == nil).
+func TestManualGameNotPolled(t *testing.T) {
+	st := openStore(t)
+	start := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Minute)
+	gid, err := st.CreateGame(
+		&store.Game{Title: "Матбой", Mode: store.ModeManual, N: 1,
+			StartAmount: 20000, StartSpeed: 15, DurationSec: 5100, StartAt: &start},
+		[]store.Level{{Level: 1, TaskCost: 1000, TestCost: 500, Load: 1, AmountBonus: 2000, SpeedBonus: 1}},
+		[][]store.TaskInput{{{ChapterID: -1001, URL: ""}}},
+		[]store.TeamInput{{Name: "К", InformaticsUserID: 0, Login: "k", Password: "p"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newPoller(t, st)
+	p.Client = nil // упадёт с паникой, если опросчик попробует выкачивать
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.pollOnce(ctx, time.Millisecond)
+	if msg, _ := p.LastError(); msg != "" {
+		t.Errorf("опрос ручной игры дал ошибку: %s", msg)
+	}
+	events, _ := st.GetEvents(gid)
+	if len(events) != 0 {
+		t.Errorf("у ручной игры появились события от опросчика")
 	}
 }
 
