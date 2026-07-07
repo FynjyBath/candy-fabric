@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"candyfactory/internal/answer"
 	"candyfactory/internal/game"
 	"candyfactory/internal/store"
 )
@@ -34,7 +35,10 @@ type Server struct {
 	pageRefresh time.Duration
 	cache       *stateCache
 	tmpl        *template.Template
-	buyMu       sync.Mutex // сериализация самостоятельных покупок команд
+	buyMu       sync.Mutex // сериализация покупок и ответов команд
+	// Анти-брутфорс ответов (мат-режим): по паре (команда, ячейка) растущая
+	// задержка после неверных попыток. Доступ — под buyMu.
+	answerStrikes map[string]answerStrike
 
 	// Оформление всего сайта: candy | neuro | hamster. Хранится в файле,
 	// меняется из админки, применяется ко всем страницам сразу.
@@ -59,6 +63,43 @@ type Config struct {
 	InformaticsBase string
 }
 
+// answerStrike — счётчик неверных ответов и момент, до которого приём
+// следующего ответа по этой ячейке заблокирован.
+type answerStrike struct {
+	count int
+	until time.Time
+}
+
+// pruneAnswerStrikes ограничивает рост карты штрафов: при большом размере
+// удаляет давно истёкшие записи (решённые/заброшенные ячейки). Вызывается
+// под buyMu. Порог высок, поэтому в горячем пути почти всегда no-op.
+func (s *Server) pruneAnswerStrikes(now time.Time) {
+	if len(s.answerStrikes) < 10000 {
+		return
+	}
+	for k, st := range s.answerStrikes {
+		if now.Sub(st.until) > time.Hour {
+			delete(s.answerStrikes, k)
+		}
+	}
+}
+
+// answerCooldown — задержка после count-го подряд неверного ответа. Первая
+// ошибка бесплатна (опечатка), дальше задержка растёт экспоненциально
+// (2, 4, 8, …), но не больше 30 секунд. Честная команда после верного
+// расчёта укладывается в пару попыток, а перебор из тысяч вариантов
+// растягивается на часы.
+func answerCooldown(count int) time.Duration {
+	if count <= 1 {
+		return 0
+	}
+	d := time.Duration(1<<uint(count-1)) * time.Second
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
 // Доступные оформления сайта.
 var validThemes = map[string]string{
 	"candy":   "Конфетная фабрика",
@@ -74,6 +115,7 @@ func NewServer(cfg Config) (*Server, error) {
 		adminCreds:      cfg.AdminCredsPath,
 		themePath:       cfg.ThemePath,
 		theme:           "candy",
+		answerStrikes:   map[string]answerStrike{},
 		pageRefresh:     cfg.PageRefresh,
 		cache:           newStateCache(),
 		PollerError:     cfg.PollerError,
@@ -144,6 +186,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/g/{gameId}/state", s.handlePublicState)
 	mux.HandleFunc("GET /api/g/{gameId}/team/{teamId}/state", s.handleTeamState)
 	mux.HandleFunc("POST /api/g/{gameId}/team/{teamId}/buy", s.handleTeamBuy)
+	mux.HandleFunc("POST /api/g/{gameId}/team/{teamId}/answer", s.handleTeamAnswer)
 
 	s.registerAdmin(mux)
 	return mux
@@ -376,10 +419,6 @@ func (s *Server) handleTeamBuy(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
 		return
 	}
-	if g.Mode == store.ModeManual {
-		jsonErr(w, http.StatusConflict, "в этой игре покупки вводит организатор")
-		return
-	}
 	if g.Status(time.Now()) != "running" {
 		jsonErr(w, http.StatusConflict, "покупки доступны только во время игры")
 		return
@@ -447,6 +486,134 @@ func (s *Server) handleTeamBuy(w http.ResponseWriter, r *http.Request) {
 	s.logger.Printf("INFO команда %q купила задачу (игра %d, ячейка %d, task %d, −%d)",
 		team.Name, g.ID, cell, taskID, lvl.TaskCost)
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// handleTeamAnswer — отправка ответа командой в математическом режиме.
+// Задача адресуется номером ячейки; ответ сравнивается с эталонным
+// (нормализация пробелов и регистра). Верный ответ засчитывает задачу
+// (событие solve), неверный не меняет состояние.
+func (s *Server) handleTeamAnswer(w http.ResponseWriter, r *http.Request) {
+	g := s.gameFromPath(w, r)
+	if g == nil {
+		return
+	}
+	if s.session(r) == nil {
+		jsonErr(w, http.StatusUnauthorized, "требуется вход команды")
+		return
+	}
+	team := s.teamAccess(w, r, g)
+	if team == nil {
+		return
+	}
+	if !s.checkCSRF(r) {
+		jsonErr(w, http.StatusForbidden, "неверный CSRF-токен")
+		return
+	}
+	// Сериализуем с покупками и админскими событиями: между проверкой
+	// состояния и записью solve никто не должен вклиниться.
+	s.buyMu.Lock()
+	defer s.buyMu.Unlock()
+
+	g, err := s.store.GetGame(g.ID)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
+		return
+	}
+	if g.Mode != store.ModeManual {
+		jsonErr(w, http.StatusConflict, "приём ответов доступен только в математическом режиме")
+		return
+	}
+	if g.Status(time.Now()) != "running" {
+		jsonErr(w, http.StatusConflict, "ответы принимаются только во время игры")
+		return
+	}
+	cell, err := strconv.Atoi(r.FormValue("cell"))
+	if err != nil || cell < 1 || cell > g.N*g.N {
+		jsonErr(w, http.StatusBadRequest, "некорректная ячейка")
+		return
+	}
+	order, err := s.store.GetTaskOrder(team.ID)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
+		return
+	}
+	taskID, ok := order[cell]
+	if !ok {
+		jsonErr(w, http.StatusConflict, "задача ячейки ещё не назначена")
+		return
+	}
+	snap, err := s.snapshot(g)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сервера")
+		return
+	}
+	ts := snap.Result.Teams[team.ID]
+	if ts == nil {
+		jsonErr(w, http.StatusInternalServerError, "состояние команды не найдено")
+		return
+	}
+	st := ts.Tasks[taskID]
+	if st == nil {
+		jsonErr(w, http.StatusInternalServerError, "состояние задачи не найдено")
+		return
+	}
+	if st.State == game.StatePassed {
+		jsonErr(w, http.StatusConflict, "задача уже решена")
+		return
+	}
+	if st.State != game.StateBought {
+		jsonErr(w, http.StatusConflict, "сначала купите задачу")
+		return
+	}
+	var task *store.Task
+	for i := range snap.Tasks {
+		if snap.Tasks[i].ID == taskID {
+			task = &snap.Tasks[i]
+			break
+		}
+	}
+	if task == nil {
+		jsonErr(w, http.StatusInternalServerError, "задача не найдена")
+		return
+	}
+	if strings.TrimSpace(task.Answer) == "" {
+		jsonErr(w, http.StatusConflict, "для этой задачи автопроверка не настроена — обратитесь к организатору")
+		return
+	}
+	// Анти-брутфорс: после серии неверных ответов приём временно блокируется.
+	strikeKey := fmt.Sprintf("%d:%d:%d", g.ID, team.ID, cell)
+	now := time.Now()
+	s.pruneAnswerStrikes(now)
+	if st := s.answerStrikes[strikeKey]; now.Before(st.until) {
+		wait := int(st.until.Sub(now).Seconds()) + 1
+		w.WriteHeader(http.StatusTooManyRequests)
+		writeJSON(w, map[string]any{"ok": false, "wait": wait,
+			"error": fmt.Sprintf("слишком много попыток, подождите %d с", wait)})
+		return
+	}
+	submitted := r.FormValue("answer")
+	if !answer.Equal(submitted, task.Answer) {
+		st := s.answerStrikes[strikeKey]
+		st.count++
+		st.until = now.Add(answerCooldown(st.count))
+		s.answerStrikes[strikeKey] = st
+		s.logger.Printf("INFO команда %q — неверный ответ (игра %d, ячейка %d, task %d, попытка %d)",
+			team.Name, g.ID, cell, taskID, st.count)
+		writeJSON(w, map[string]any{"ok": true, "correct": false})
+		return
+	}
+	delete(s.answerStrikes, strikeKey)
+	if _, err := s.store.AddEvent(&store.Event{
+		GameID: g.ID, TeamID: team.ID, TaskID: &taskID,
+		Type: "solve", At: time.Now().UTC().Truncate(time.Second),
+		Source: "manual", Enabled: true, Comment: "верный ответ команды",
+	}); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "ошибка сохранения")
+		return
+	}
+	s.logger.Printf("INFO команда %q — верный ответ, задача засчитана (игра %d, ячейка %d, task %d)",
+		team.Name, g.ID, cell, taskID)
+	writeJSON(w, map[string]any{"ok": true, "correct": true})
 }
 
 func (s *Server) handleTeamState(w http.ResponseWriter, r *http.Request) {

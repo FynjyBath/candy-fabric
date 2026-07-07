@@ -757,12 +757,20 @@ func editForm(t *testing.T, st *store.Store, gameID int64, csrf string) url.Valu
 		form.Set(fmt.Sprintf("amount_bonus_%d", l.Level), fmt.Sprint(l.AmountBonus))
 		form.Set(fmt.Sprintf("speed_bonus_%d", l.Level), fmt.Sprint(l.SpeedBonus))
 	}
-	rows := map[int][]string{}
-	for _, task := range tasks {
-		rows[task.Level] = append(rows[task.Level], task.URL)
-	}
-	for lvl, urls := range rows {
-		form.Set(fmt.Sprintf("tasks_%d", lvl), strings.Join(urls, "\n"))
+	if g.Mode == store.ModeManual {
+		// Мат-режим: поля условие+ответ на каждую задачу.
+		for _, task := range tasks {
+			form.Set(fmt.Sprintf("stmt_%d_%d", task.Level, task.Ord), task.Statement)
+			form.Set(fmt.Sprintf("ans_%d_%d", task.Level, task.Ord), task.Answer)
+		}
+	} else {
+		rows := map[int][]string{}
+		for _, task := range tasks {
+			rows[task.Level] = append(rows[task.Level], task.URL)
+		}
+		for lvl, urls := range rows {
+			form.Set(fmt.Sprintf("tasks_%d", lvl), strings.Join(urls, "\n"))
+		}
 	}
 	for _, tm := range teams {
 		form.Add("team_id", fmt.Sprint(tm.ID))
@@ -1153,32 +1161,38 @@ func TestManualMode(t *testing.T) {
 		t.Errorf("командный state ручной игры содержит ссылки/chapterid:\n%s", raw)
 	}
 
-	// Самостоятельная покупка запрещена.
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/buy",
-		strings.NewReader("cell=1"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("X-CSRF-Token", teamCSRF)
-	resp, _ = tc.Do(req)
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "организатор") {
-		t.Errorf("self-buy в ручном режиме: HTTP %d %s, ожидался 409 с понятной ошибкой", resp.StatusCode, body)
-	}
-
-	// Полный цикл через админку: купить → решить, бонусы применяются.
-	teams, _ := st.GetTeams(gameID)
-	taskID := tasks[0].ID
-	for _, typ := range []string{"buy_task", "solve"} {
-		resp, err := c.PostForm(fmt.Sprintf("%s/admin/g/%d/event", ts.URL, gameID), url.Values{
-			"csrf": {csrf}, "team_id": {fmt.Sprint(teams[0].ID)},
-			"task_id": {fmt.Sprint(taskID)}, "type": {typ}, "confirmed": {"1"},
-		})
+	// Самостоятельная покупка в математическом режиме теперь разрешена.
+	buy := func(cl *http.Client, token, path string, cell int) (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+path+"/buy",
+			strings.NewReader(url.Values{"cell": {fmt.Sprint(cell)}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", token)
+		resp, err := cl.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		io.Copy(io.Discard, resp.Body)
+		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		return resp.StatusCode, string(b)
 	}
+	if code, body := buy(tc, teamCSRF, teamPath, 1); code != http.StatusOK {
+		t.Fatalf("self-buy в математическом режиме: HTTP %d %s, ожидался 200", code, body)
+	}
+
+	// Купленную командой задачу решает организатор (буквой solve).
+	teams, _ := st.GetTeams(gameID)
+	order, _ := st.GetTaskOrder(teams[0].ID)
+	boughtTaskID := order[1]
+	resp, err := c.PostForm(fmt.Sprintf("%s/admin/g/%d/event", ts.URL, gameID), url.Values{
+		"csrf": {csrf}, "team_id": {fmt.Sprint(teams[0].ID)},
+		"task_id": {fmt.Sprint(boughtTaskID)}, "type": {"solve"}, "confirmed": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
 	var pub struct {
 		Teams []struct {
 			ID    int64 `json:"id"`
@@ -1200,7 +1214,7 @@ func TestManualMode(t *testing.T) {
 	if passed != 1 {
 		t.Errorf("решённых ячеек %d, ожидалась 1", passed)
 	}
-	// Скорость: 15 - 1 (load) + 1 (load назад) + 1 (бонус) = 16.
+	// Скорость: 15 - 1 (load при покупке) + 1 (load назад) + 1 (бонус) = 16.
 	for _, tm := range pub.Teams {
 		if tm.ID == teams[0].ID && tm.Speed != 16 {
 			t.Errorf("скорость после решения %d, ожидалось 16", tm.Speed)
@@ -1278,6 +1292,486 @@ func TestManualModeMissingFieldKeepsMode(t *testing.T) {
 		if task.ChapterID >= 0 {
 			t.Errorf("плейсхолдер заменён: chapterid=%d", task.ChapterID)
 		}
+	}
+}
+
+// createManualGameWithAnswers создаёт математическую игру с эталонными
+// ответами (по n на уровень).
+func createManualGameWithAnswers(t *testing.T, ts *httptest.Server, c *http.Client, csrf string) int64 {
+	t.Helper()
+	form := url.Values{
+		"csrf": {csrf}, "title": {"Матбой с ответами"}, "mode": {"manual"}, "n": {"2"},
+		"start_amount": {"20000"}, "start_speed": {"15"}, "duration_min": {"85"},
+		"team_id":       {"", ""},
+		"team_name":     {"Синусы", "Косинусы"},
+		"team_user_id":  {"", ""},
+		"team_login":    {"sin", "cos"},
+		"team_password": {"p1", "p2"},
+		// уровень 1: варианты «42» и «Привет Мир»; уровень 2: «3.14» и пусто.
+		// Условия: у 1.1 — текст, у 1.2 — ссылка, остальные без условия.
+		"ans_1_1":  {"42"},
+		"ans_1_2":  {"Привет Мир"},
+		"ans_2_1":  {"3.14"},
+		"ans_2_2":  {""},
+		"stmt_1_1": {"Найдите ответ на главный вопрос"},
+		"stmt_1_2": {"https://example.org/task2.pdf"},
+	}
+	for lvl := 1; lvl <= 2; lvl++ {
+		form.Set(fmt.Sprintf("task_cost_%d", lvl), "1000")
+		form.Set(fmt.Sprintf("test_cost_%d", lvl), "500")
+		form.Set(fmt.Sprintf("load_%d", lvl), "1")
+		form.Set(fmt.Sprintf("amount_bonus_%d", lvl), "2000")
+		form.Set(fmt.Sprintf("speed_bonus_%d", lvl), "1")
+	}
+	resp, err := c.PostForm(ts.URL+"/admin/games/new", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.HasPrefix(resp.Request.URL.Path, "/admin/g/") {
+		t.Fatalf("игра с ответами не создана: %s\n%.700s", resp.Request.URL.Path, body)
+	}
+	var id int64
+	fmt.Sscanf(strings.TrimPrefix(resp.Request.URL.Path, "/admin/g/"), "%d", &id)
+	return id
+}
+
+// Приём ответов в математическом режиме: верный засчитывает, неверный нет,
+// эталон нормализуется, ответы не утекают, has_answer в состоянии.
+func TestManualAnswers(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGameWithAnswers(t, ts, c, csrf)
+
+	// Ответы сохранены нормализованными по вариантам.
+	tasks, _ := st.GetTasks(gameID)
+	byLvlOrd := map[[2]int]store.Task{}
+	for _, tk := range tasks {
+		byLvlOrd[[2]int{tk.Level, tk.Ord}] = tk
+	}
+	if byLvlOrd[[2]int{1, 1}].Answer != "42" || byLvlOrd[[2]int{1, 2}].Answer != "Привет Мир" {
+		t.Fatalf("ответы уровня 1 не сохранены: %+v", tasks)
+	}
+	if byLvlOrd[[2]int{2, 1}].Answer != "3.14" || byLvlOrd[[2]int{2, 2}].Answer != "" {
+		t.Fatalf("ответы уровня 2 не сохранены: %+v", tasks)
+	}
+
+	startGame(t, ts, c, csrf, gameID)
+	teams, _ := st.GetTeams(gameID)
+	tc, teamPath, teamCSRF := teamClient(t, ts, gameID, "sin", "p1")
+
+	// Отличимые значения ответов не должны утекать в командный state — ни до,
+	// ни после покупки (когда у ячейки появляются детали). «42» не проверяем:
+	// оно совпадает с секундами в таймстампах.
+	assertNoAnswerLeak := func(where string) {
+		resp, _ := tc.Get(ts.URL + "/api" + teamPath + "/state")
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		for _, secret := range []string{"Привет", "3.14", `"answer"`} {
+			if strings.Contains(string(raw), secret) {
+				t.Errorf("эталонный ответ %q утёк в состояние (%s):\n%s", secret, where, raw)
+			}
+		}
+	}
+	assertNoAnswerLeak("до покупки")
+
+	answer := func(path, token string, cell int, ans string) (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+path+"/answer",
+			strings.NewReader(url.Values{"cell": {fmt.Sprint(cell)}, "answer": {ans}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", token)
+		resp, err := tc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		return resp.StatusCode, out
+	}
+
+	// Найдём ячейку команды sin, где стоит задача уровня 1, вариант 1 (ответ «42»).
+	order, _ := st.GetTaskOrder(teams[0].ID)
+	want := byLvlOrd[[2]int{1, 1}].ID
+	targetCell := 0
+	for cell, tid := range order {
+		if tid == want {
+			targetCell = cell
+		}
+	}
+	if targetCell == 0 {
+		t.Fatal("не нашли ячейку с задачей уровня 1 вариант 1")
+	}
+
+	// Ответ до покупки — отказ.
+	if code, out := answer(teamPath, teamCSRF, targetCell, "42"); code != http.StatusConflict {
+		t.Errorf("ответ до покупки: HTTP %d %v, ожидался 409", code, out)
+	}
+	// Покупаем ячейку.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/buy",
+		strings.NewReader(url.Values{"cell": {fmt.Sprint(targetCell)}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", teamCSRF)
+	resp, _ := tc.Do(req)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	// После покупки у ячейки появляются детали — эталон всё равно не утёк.
+	assertNoAnswerLeak("после покупки")
+
+	// Неверный ответ: 200, correct=false, задача не решена.
+	code, out := answer(teamPath, teamCSRF, targetCell, "41")
+	if code != http.StatusOK || out["correct"] != false {
+		t.Errorf("неверный ответ: HTTP %d %v, ожидалось 200 correct=false", code, out)
+	}
+	// Верный ответ с «грязью» (регистр/пробелы) — засчитан.
+	code, out = answer(teamPath, teamCSRF, targetCell, "  42 ")
+	if code != http.StatusOK || out["correct"] != true {
+		t.Errorf("верный ответ: HTTP %d %v, ожидалось 200 correct=true", code, out)
+	}
+	// Задача стала решённой; повторный ответ — «уже решена».
+	var pub struct {
+		Teams []struct {
+			ID    int64 `json:"id"`
+			Cells []struct {
+				Cell  int    `json:"cell"`
+				State string `json:"state"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	getJSON(t, c, fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID), &pub)
+	solved := false
+	for _, tm := range pub.Teams {
+		if tm.ID != teams[0].ID {
+			continue
+		}
+		for _, cell := range tm.Cells {
+			if cell.Cell == targetCell && cell.State == "passed" {
+				solved = true
+			}
+		}
+	}
+	if !solved {
+		t.Errorf("после верного ответа задача не засчитана")
+	}
+	if code, _ := answer(teamPath, teamCSRF, targetCell, "42"); code != http.StatusConflict {
+		t.Errorf("ответ по решённой задаче: HTTP %d, ожидался 409", code)
+	}
+
+	// has_answer виден у своей купленной задачи с эталоном.
+	var teamState struct {
+		Teams []struct {
+			ID    int64 `json:"id"`
+			Cells []struct {
+				Cell      int  `json:"cell"`
+				HasAnswer bool `json:"has_answer"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	getJSON(t, tc, ts.URL+"/api"+teamPath+"/state", &teamState)
+	// Купим задачу уровня 2 вариант 2 (без эталона) и проверим has_answer=false.
+	noAnsTask := byLvlOrd[[2]int{2, 2}].ID
+	noAnsCell := 0
+	for cell, tid := range order {
+		if tid == noAnsTask {
+			noAnsCell = cell
+		}
+	}
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/buy",
+		strings.NewReader(url.Values{"cell": {fmt.Sprint(noAnsCell)}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", teamCSRF)
+	resp, _ = tc.Do(req)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if code, out := answer(teamPath, teamCSRF, noAnsCell, "что угодно"); code != http.StatusConflict {
+		t.Errorf("ответ по задаче без эталона: HTTP %d %v, ожидался 409", code, out)
+	}
+	getJSON(t, tc, ts.URL+"/api"+teamPath+"/state", &teamState)
+	for _, tm := range teamState.Teams {
+		if tm.ID != teams[0].ID {
+			continue
+		}
+		for _, cell := range tm.Cells {
+			if cell.Cell == noAnsCell && cell.HasAnswer {
+				t.Errorf("has_answer=true у задачи без эталона")
+			}
+		}
+	}
+
+	// В informatics-игре приём ответов недоступен.
+	gid2 := createGame(t, ts, c, csrf)
+	startGame(t, ts, c, csrf, gid2)
+	tc2, teamPath2, teamCSRF2 := teamClient(t, ts, gid2, "alpha", "pa")
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath2+"/answer",
+		strings.NewReader("cell=1&answer=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", teamCSRF2)
+	resp, _ = tc2.Do(req)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("приём ответа в informatics-игре: HTTP %d, ожидался 409", resp.StatusCode)
+	}
+}
+
+func TestAnswerCooldown(t *testing.T) {
+	cases := map[int]time.Duration{
+		0: 0, 1: 0, 2: 2 * time.Second, 3: 4 * time.Second,
+		4: 8 * time.Second, 5: 16 * time.Second, 6: 30 * time.Second, 10: 30 * time.Second,
+	}
+	for count, want := range cases {
+		if got := answerCooldown(count); got != want {
+			t.Errorf("answerCooldown(%d) = %v, ожидалось %v", count, got, want)
+		}
+	}
+}
+
+// Анти-брутфорс: серия неверных ответов включает нарастающую задержку (429),
+// верный ответ её сбрасывает.
+func TestAnswerBruteforceCooldown(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGameWithAnswers(t, ts, c, csrf) // level1 var1 = «42»
+	startGame(t, ts, c, csrf, gameID)
+	teams, _ := st.GetTeams(gameID)
+	tasks, _ := st.GetTasks(gameID)
+	var want int64
+	for _, tk := range tasks {
+		if tk.Level == 1 && tk.Ord == 1 {
+			want = tk.ID
+		}
+	}
+	order, _ := st.GetTaskOrder(teams[0].ID)
+	targetCell := 0
+	for cell, tid := range order {
+		if tid == want {
+			targetCell = cell
+		}
+	}
+	tc, teamPath, teamCSRF := teamClient(t, ts, gameID, "sin", "p1")
+	// Покупаем.
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/buy",
+		strings.NewReader(url.Values{"cell": {fmt.Sprint(targetCell)}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", teamCSRF)
+	resp, _ := tc.Do(req)
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	ans := func(a string) (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/answer",
+			strings.NewReader(url.Values{"cell": {fmt.Sprint(targetCell)}, "answer": {a}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", teamCSRF)
+		resp, err := tc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		return resp.StatusCode, out
+	}
+	// Первая ошибка бесплатна.
+	if code, out := ans("0"); code != http.StatusOK || out["correct"] != false {
+		t.Fatalf("1-я ошибка: HTTP %d %v", code, out)
+	}
+	// Вторая ошибка ставит задержку; третья попытка сразу — 429.
+	if code, _ := ans("1"); code != http.StatusOK {
+		t.Fatalf("2-я ошибка: HTTP %d", code)
+	}
+	code, out := ans("2")
+	if code != http.StatusTooManyRequests {
+		t.Errorf("3-я попытка сразу после задержки: HTTP %d, ожидался 429 (%v)", code, out)
+	}
+	if _, ok := out["wait"]; !ok {
+		t.Errorf("в ответе 429 нет поля wait: %v", out)
+	}
+	// Даже верный ответ во время кулдауна блокируется (429) — задача не решена.
+	if code, _ := ans("42"); code != http.StatusTooManyRequests {
+		t.Errorf("верный ответ во время кулдауна: HTTP %d, ожидался 429", code)
+	}
+	// Сброс кулдауна после верного ответа покрыт в TestManualAnswers
+	// (одна бесплатная ошибка → верный ответ проходит без задержки).
+}
+
+// Условие математической задачи показывается команде после покупки: текст —
+// в поле statement, ссылка — в url; до покупки условие скрыто и не утекает.
+func TestManualStatement(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGameWithAnswers(t, ts, c, csrf) // 1.1 текст, 1.2 ссылка
+	startGame(t, ts, c, csrf, gameID)
+	teams, _ := st.GetTeams(gameID)
+	tasks, _ := st.GetTasks(gameID)
+	byLvlOrd := map[[2]int]store.Task{}
+	for _, tk := range tasks {
+		byLvlOrd[[2]int{tk.Level, tk.Ord}] = tk
+	}
+	// Условия сохранены.
+	if byLvlOrd[[2]int{1, 1}].Statement != "Найдите ответ на главный вопрос" {
+		t.Fatalf("условие 1.1 не сохранено: %q", byLvlOrd[[2]int{1, 1}].Statement)
+	}
+	if byLvlOrd[[2]int{1, 2}].Statement != "https://example.org/task2.pdf" {
+		t.Fatalf("условие 1.2 (ссылка) не сохранено: %q", byLvlOrd[[2]int{1, 2}].Statement)
+	}
+
+	tc, teamPath, teamCSRF := teamClient(t, ts, gameID, "sin", "p1")
+	order, _ := st.GetTaskOrder(teams[0].ID)
+	cellOf := func(lvl, ord int) int {
+		for cell, tid := range order {
+			if tid == byLvlOrd[[2]int{lvl, ord}].ID {
+				return cell
+			}
+		}
+		return 0
+	}
+	textCell := cellOf(1, 1) // условие текстом
+	linkCell := cellOf(1, 2) // условие ссылкой
+
+	teamState := func() string {
+		resp, _ := tc.Get(ts.URL + "/api" + teamPath + "/state")
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return string(b)
+	}
+	// До покупки условие не утекает.
+	if s := teamState(); strings.Contains(s, "Найдите ответ") || strings.Contains(s, "example.org") {
+		t.Fatalf("условие утекло до покупки:\n%s", s)
+	}
+	buy := func(cell int) {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api"+teamPath+"/buy",
+			strings.NewReader(url.Values{"cell": {fmt.Sprint(cell)}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-CSRF-Token", teamCSRF)
+		resp, _ := tc.Do(req)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+	buy(textCell)
+	buy(linkCell)
+
+	var state struct {
+		Teams []struct {
+			ID    int64 `json:"id"`
+			Cells []struct {
+				Cell      int    `json:"cell"`
+				Statement string `json:"statement"`
+				URL       string `json:"url"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	getJSON(t, tc, ts.URL+"/api"+teamPath+"/state", &state)
+	var own *struct {
+		ID    int64 `json:"id"`
+		Cells []struct {
+			Cell      int    `json:"cell"`
+			Statement string `json:"statement"`
+			URL       string `json:"url"`
+		} `json:"cells"`
+	}
+	for i := range state.Teams {
+		if state.Teams[i].ID == teams[0].ID {
+			own = &state.Teams[i]
+		}
+	}
+	for _, cell := range own.Cells {
+		if cell.Cell == textCell {
+			if cell.Statement != "Найдите ответ на главный вопрос" || cell.URL != "" {
+				t.Errorf("условие-текст: statement=%q url=%q", cell.Statement, cell.URL)
+			}
+		}
+		if cell.Cell == linkCell {
+			if cell.URL != "https://example.org/task2.pdf" || cell.Statement != "" {
+				t.Errorf("условие-ссылка: url=%q statement=%q", cell.URL, cell.Statement)
+			}
+		}
+	}
+
+	// В состоянии другой команды условия наших ячеек не видны (проверяем,
+	// что statement/url есть только у своих купленных).
+	other := state.Teams[1]
+	if own.ID == other.ID {
+		other = state.Teams[0]
+	}
+	for _, cell := range other.Cells {
+		if cell.Statement != "" || cell.URL != "" {
+			t.Errorf("условие чужой команды видно: %+v", cell)
+		}
+	}
+
+	// Правка условия купленной задачи посреди игры долетает до состояния.
+	form := editForm(t, st, gameID, csrf)
+	form.Set("mode", "manual")
+	form.Set("stmt_1_1", "исправленное условие")
+	if _, body := postEdit(t, ts, c, gameID, form); strings.Contains(body, "Ошибки формы") {
+		t.Fatalf("правка условия не прошла:\n%.300s", body)
+	}
+	getJSON(t, tc, ts.URL+"/api"+teamPath+"/state", &state)
+	for i := range state.Teams {
+		if state.Teams[i].ID != teams[0].ID {
+			continue
+		}
+		for _, cell := range state.Teams[i].Cells {
+			if cell.Cell == textCell && cell.Statement != "исправленное условие" {
+				t.Errorf("правка условия купленной задачи не долетела: %q", cell.Statement)
+			}
+		}
+	}
+}
+
+// Редактирование ответов: форма реконструирует эталоны из БД, правка одного
+// не стирает остальные (в т. ч. пустые варианты сохраняют позицию).
+func TestManualAnswersEditRoundTrip(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createManualGameWithAnswers(t, ts, c, csrf) // 42/Привет Мир, 3.14/(пусто)
+
+	// Форма редактирования восстанавливает поля условие+ответ по вариантам.
+	resp, _ := c.Get(fmt.Sprintf("%s/admin/g/%d/edit", ts.URL, gameID))
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	page := string(body)
+	for _, want := range []string{
+		`name="ans_1_1" value="42"`,
+		`name="ans_1_2" value="Привет Мир"`,
+		`name="ans_2_1" value="3.14"`,
+		`name="stmt_1_1"`, `Найдите ответ на главный вопрос`,
+		`name="stmt_1_2"`, `https://example.org/task2.pdf`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("в форме редактирования нет %q", want)
+		}
+	}
+
+	// Меняем только ответ и условие варианта 1.2, остальное сохраняется.
+	form := editForm(t, st, gameID, csrf)
+	form.Set("mode", "manual")
+	form.Set("ans_1_2", "Пока")
+	form.Set("stmt_1_2", "новое условие текстом")
+	path, respBody := postEdit(t, ts, c, gameID, form)
+	if strings.Contains(respBody, "Ошибки формы") {
+		t.Fatalf("правка не прошла: %s\n%.400s", path, respBody)
+	}
+	tasks, _ := st.GetTasks(gameID)
+	gotAns := map[[2]int]string{}
+	gotStmt := map[[2]int]string{}
+	for _, tk := range tasks {
+		gotAns[[2]int{tk.Level, tk.Ord}] = tk.Answer
+		gotStmt[[2]int{tk.Level, tk.Ord}] = tk.Statement
+	}
+	wantAns := map[[2]int]string{{1, 1}: "42", {1, 2}: "Пока", {2, 1}: "3.14", {2, 2}: ""}
+	for k, v := range wantAns {
+		if gotAns[k] != v {
+			t.Errorf("ответ уровень %d вариант %d = %q, ожидалось %q", k[0], k[1], gotAns[k], v)
+		}
+	}
+	if gotStmt[[2]int{1, 1}] != "Найдите ответ на главный вопрос" {
+		t.Errorf("условие 1.1 не сохранилось: %q", gotStmt[[2]int{1, 1}])
+	}
+	if gotStmt[[2]int{1, 2}] != "новое условие текстом" {
+		t.Errorf("условие 1.2 не обновилось: %q", gotStmt[[2]int{1, 2}])
 	}
 }
 

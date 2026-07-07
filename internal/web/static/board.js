@@ -135,6 +135,7 @@ function initBoard(opts) {
 	// только в момент изменения (не при загрузке страницы).
 	let prevCellStates = null; // "teamId:cell" -> state
 	let prevStatus = null;
+	let lastOwnKey = null; // сигнатура своей таблицы (перестраивать при изменении)
 
 	// Победители: команды с максимальными запасами (ничья = несколько).
 	function winnersOf(st) {
@@ -326,11 +327,22 @@ function initBoard(opts) {
 		if (opts.mode === "team") {
 			const hint = document.getElementById("own-hint");
 			if (hint && st.mode === "manual") {
-				hint.textContent = "Задачи выдаёт организатор при покупке; таблица показывает состояние ваших задач и экономику.";
+				hint.textContent = "Купите задачу, получите вариант у организатора, решите на бумаге и отправьте ответ в поле у ячейки. Верный ответ засчитывает задачу.";
 			}
 			const own = (st.teams || []).find((t) => t.id === opts.teamId);
 			const box = document.getElementById("own-table");
-			if (own && box) {
+			// Своя таблица зависит только от состояний ячеек (не от запасов,
+			// растущих каждую секунду). Перестраиваем её лишь при изменении —
+			// иначе ежесекундный ререндер стирал бы вводимый ответ, фокус и
+			// сообщение «Неверно».
+			// В сигнатуру входят и условие/ссылка — правка условия у купленной
+			// задачи посреди игры должна перерисовать таблицу.
+			const ownKey = own
+				? [st.status, st.mode, ...own.cells.map((c) =>
+					[c.state, c.has_answer ? "A" : "", c.url || "", c.statement || ""].join("~"))].join("|")
+				: "";
+			if (own && box && ownKey !== lastOwnKey) {
+				lastOwnKey = ownKey;
 				box.textContent = "";
 				const n = st.n;
 				const names = n === 3 ? ["Easy", "Middle", "Hard"] : [];
@@ -346,8 +358,15 @@ function initBoard(opts) {
 						const cell = own.cells[r * n + c];
 						const td = document.createElement("td");
 						td.appendChild(cellDiv(cell, { link: true }));
-						// В ручном режиме покупки вводит организатор.
-						if (running && cell.state === "hidden" && st.mode !== "manual") {
+						// Условие математической задачи текстом (ссылка уже
+						// сделала номер ячейки кликабельным через cellDiv).
+						if (cell.state !== "hidden" && cell.statement) {
+							const s = document.createElement("div");
+							s.className = "cell-statement";
+							s.textContent = cell.statement;
+							td.appendChild(s);
+						}
+						if (running && cell.state === "hidden") {
 							const level = st.levels[r] || {};
 							const btn = document.createElement("button");
 							btn.className = "buy-btn";
@@ -355,6 +374,11 @@ function initBoard(opts) {
 							btn.addEventListener("click", () =>
 								teamBuy(cell.cell, r + 1, level.task_cost, level.load, btn));
 							td.appendChild(btn);
+						}
+						// Математический режим: у купленной задачи с эталонным
+						// ответом — поле для отправки ответа.
+						if (running && st.mode === "manual" && cell.state === "bought" && cell.has_answer) {
+							td.appendChild(answerForm(cell.cell));
 						}
 						tr.appendChild(td);
 					}
@@ -429,6 +453,91 @@ function initBoard(opts) {
 			tick();
 		} catch (e) {
 			alert("Нет связи с сервером, попробуйте ещё раз");
+			btn.disabled = false;
+		}
+	}
+
+	// Короткий сигнал неверного ответа через WebAudio (без звукового файла).
+	let audioCtx = null;
+	function buzzWrong() {
+		if (reducedMotion) return;
+		try {
+			audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+			const osc = audioCtx.createOscillator();
+			const gain = audioCtx.createGain();
+			osc.type = "square";
+			osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+			gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+			gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+			osc.connect(gain).connect(audioCtx.destination);
+			osc.start();
+			osc.stop(audioCtx.currentTime + 0.35);
+		} catch (e) { /* нет поддержки/заблокировано */ }
+	}
+
+	// Форма отправки ответа (математический режим).
+	function answerForm(cellNum) {
+		const form = document.createElement("form");
+		form.className = "answer-form";
+		const inp = document.createElement("input");
+		inp.type = "text";
+		inp.placeholder = "ответ";
+		inp.className = "answer-input";
+		const btn = document.createElement("button");
+		btn.type = "submit";
+		btn.textContent = "Ответить";
+		const msg = document.createElement("span");
+		msg.className = "answer-msg";
+		form.appendChild(inp);
+		form.appendChild(btn);
+		form.appendChild(msg);
+		form.addEventListener("submit", (e) => {
+			e.preventDefault();
+			submitAnswer(cellNum, inp.value, inp, btn, msg);
+		});
+		return form;
+	}
+
+	async function submitAnswer(cellNum, value, inp, btn, msg) {
+		if (!value.trim()) { inp.focus(); return; }
+		btn.disabled = true;
+		msg.textContent = "";
+		msg.className = "answer-msg";
+		try {
+			const body = new URLSearchParams({ cell: String(cellNum), answer: value });
+			const resp = await fetch(`/api/g/${opts.gameId}/team/${opts.teamId}/answer`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded",
+					"X-CSRF-Token": opts.csrf,
+				},
+				body: body.toString(),
+			});
+			let data = {};
+			try { data = await resp.json(); } catch (e) { /* не-JSON */ }
+			if (!resp.ok) {
+				msg.textContent = data.error || "Ошибка";
+				msg.classList.add("wrong");
+				btn.disabled = false;
+				return;
+			}
+			if (data.correct) {
+				// Верно: задача станет «решена», перерисовка подхватит
+				// зелёную ячейку, конфетти и звук победы.
+				msg.textContent = "Верно!";
+				msg.classList.add("right");
+				lastRendered = "";
+				tick();
+			} else {
+				msg.textContent = "Неверно";
+				msg.classList.add("wrong");
+				buzzWrong();
+				inp.select();
+				btn.disabled = false;
+			}
+		} catch (e) {
+			msg.textContent = "Нет связи";
+			msg.classList.add("wrong");
 			btn.disabled = false;
 		}
 	}

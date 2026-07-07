@@ -46,18 +46,74 @@ function syncLevels() {
 	}
 }
 
-document.getElementById("n-input").addEventListener("change", syncLevels);
+document.getElementById("n-input").addEventListener("change", () => {
+	syncLevels();
+	syncManualTasks();
+});
 
-// Ручной (математический) режим: ссылки на задачи и informatics user_id
-// не нужны — прячем блок задач и снимаем required-подсказки.
+function currentN() {
+	return Math.min(6, Math.max(2, parseInt(document.getElementById("n-input").value) || 3));
+}
+
+// Сетка задач математического режима: n×n полей (условие + ответ) на уровень.
+// Значения существующих полей сохраняются при перестроении (смена n / режима).
+function syncManualTasks() {
+	const box = document.getElementById("manual-tasks-box");
+	if (!box) return;
+	const n = currentN();
+	// Считать текущие значения по именам полей.
+	const vals = {};
+	for (const el of box.querySelectorAll("textarea, input")) vals[el.name] = el.value;
+	box.textContent = "";
+	for (let lvl = 1; lvl <= n; lvl++) {
+		const div = document.createElement("div");
+		div.className = "manual-level";
+		const b = document.createElement("b");
+		b.textContent = "Уровень " + lvl;
+		div.appendChild(b);
+		for (let m = 1; m <= n; m++) {
+			const row = document.createElement("div");
+			row.className = "manual-task";
+			const label = document.createElement("span");
+			label.className = "manual-task-label";
+			label.textContent = "Вариант " + m;
+			const ta = document.createElement("textarea");
+			ta.name = `stmt_${lvl}_${m}`; ta.rows = 2; ta.cols = 70;
+			ta.placeholder = "условие: ссылка или текст";
+			ta.value = vals[ta.name] || "";
+			const inp = document.createElement("input");
+			inp.name = `ans_${lvl}_${m}`;
+			inp.placeholder = "ответ (или пусто)";
+			inp.value = vals[inp.name] || "";
+			row.appendChild(label); row.appendChild(ta); row.appendChild(inp);
+			div.appendChild(row);
+		}
+		box.appendChild(div);
+	}
+}
+
+// Ручной (математический) режим: informatics user_id не нужен; блок ссылок
+// informatics скрывается, показывается сетка условий+ответов.
 function syncMode() {
 	const sel = document.getElementById("mode-input");
 	if (!sel) return;
 	const manual = sel.value === "manual";
-	const box = document.getElementById("tasks-box");
-	if (box) box.hidden = manual;
+	const legend = document.getElementById("tasks-legend");
+	if (legend) {
+		legend.textContent = manual
+			? "Задачи математического режима (условие + ответ на вариант)"
+			: "Задачи (по n ссылок informatics на уровень, по одной в строке)";
+	}
 	const hint = document.getElementById("manual-tasks-hint");
 	if (hint) hint.hidden = !manual;
+	const box = document.getElementById("tasks-box");
+	if (box) box.hidden = manual;
+	const mbox = document.getElementById("manual-tasks-box");
+	if (mbox) {
+		mbox.hidden = !manual;
+		// При первом переключении в manual (сетка пуста) — построить.
+		if (manual && !mbox.querySelector(".manual-task")) syncManualTasks();
+	}
 	for (const inp of document.querySelectorAll('input[name="team_user_id"]')) {
 		inp.disabled = manual;
 		inp.placeholder = manual ? "не нужен" : "";

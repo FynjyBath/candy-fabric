@@ -1,12 +1,20 @@
 package web
 
 import (
+	"strings"
 	"sync"
 	"time"
 
 	"candyfactory/internal/game"
 	"candyfactory/internal/store"
 )
+
+// isHTTPLink сообщает, является ли условие ссылкой (её показываем ссылкой,
+// прочее — текстом).
+func isHTTPLink(s string) bool {
+	s = strings.TrimSpace(s)
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
 
 // stateCache — кеш расчёта состояния в памяти процесса (5.3): пересчёт при
 // изменении журнала/конфигурации (версия) и не реже раза в секунду.
@@ -134,7 +142,9 @@ type cellJSON struct {
 	ChapterID int    `json:"chapter_id,omitempty"`
 	TaskID    int64  `json:"task_id,omitempty"`
 	Level     int    `json:"level,omitempty"`
-	Ord       int    `json:"ord,omitempty"` // позиция в уровне (для ручного режима)
+	Ord       int    `json:"ord,omitempty"`        // позиция в уровне (для ручного режима)
+	HasAnswer bool   `json:"has_answer,omitempty"` // задан эталонный ответ (автопроверка)
+	Statement string `json:"statement,omitempty"`  // условие задачи текстом (математический режим)
 }
 
 // buildState собирает JSON состояния. include: "public" — без ссылок вообще;
@@ -190,6 +200,16 @@ func (s *Server) buildState(snap *gameSnapshot, include string, forTeamID int64)
 						cj.TaskID = task.ID
 						cj.Level = task.Level
 						cj.Ord = task.Ord
+						cj.HasAnswer = task.Answer != ""
+						// Условие математической задачи: ссылку показываем как
+						// ссылку (в url), иначе как текст (в statement).
+						if s := strings.TrimSpace(task.Statement); s != "" {
+							if isHTTPLink(s) {
+								cj.URL = s
+							} else {
+								cj.Statement = task.Statement
+							}
+						}
 					}
 				}
 			}

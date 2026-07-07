@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -160,7 +161,8 @@ type gameForm struct {
 	DurationMin string
 	StartAt     string // datetime-local, пусто = не задано
 	Levels      []levelForm
-	TaskRows    []string // n текстариев, по n ссылок в строках
+	TaskRows    []string         // informatics: n текстариев, по n ссылок в строках
+	ManualTasks []manualTaskForm // manual: n×n задач (условие + ответ)
 	Teams       []teamForm
 	Errors      []string
 }
@@ -168,6 +170,42 @@ type gameForm struct {
 type levelForm struct {
 	Level                                             int
 	TaskCost, TestCost, Load, AmountBonus, SpeedBonus string
+}
+
+// manualTaskForm — задача математического режима в форме: условие (ссылка
+// или текст) и эталонный ответ, привязанные к (уровень, вариант).
+type manualTaskForm struct {
+	Level, Ord        int
+	Statement, Answer string
+}
+
+// manualGridLevel — уровень с его задачами для отрисовки сетки формы.
+type manualGridLevel struct {
+	Level int
+	Tasks []manualTaskForm
+}
+
+// ManualGrid группирует задачи математического режима по уровням. Пустые
+// уровни (при дырах в данных) пропускаются — шаблон не индексирует пустой
+// срез.
+func (f *gameForm) ManualGrid() []manualGridLevel {
+	if len(f.ManualTasks) == 0 {
+		return nil
+	}
+	byLvl := map[int][]manualTaskForm{}
+	var order []int
+	for _, t := range f.ManualTasks {
+		if _, ok := byLvl[t.Level]; !ok {
+			order = append(order, t.Level)
+		}
+		byLvl[t.Level] = append(byLvl[t.Level], t)
+	}
+	sort.Ints(order)
+	out := make([]manualGridLevel, 0, len(order))
+	for _, lvl := range order {
+		out = append(out, manualGridLevel{Level: lvl, Tasks: byLvl[lvl]})
+	}
+	return out
 }
 
 type teamForm struct {
@@ -288,19 +326,25 @@ func (s *Server) parseGameForm(r *http.Request) (*gameForm, *store.Game, []store
 			SpeedBonus:  parse(lf.SpeedBonus, "бонус к скорости"),
 		})
 	}
-	// Задачи. В ручном (математическом) режиме ссылок нет: генерируются
-	// n×n плейсхолдеров с синтетическими отрицательными chapterid —
-	// они уникальны в игре и никогда не совпадут с реальной посылкой.
+	// Задачи. В ручном (математическом) режиме ссылок informatics нет:
+	// генерируются n×n плейсхолдеров с синтетическими отрицательными
+	// chapterid (уникальны в игре, не совпадут с реальной посылкой). Для
+	// каждой задачи задаётся условие (ссылка или текст, показывается команде
+	// после покупки) и эталонный ответ (пусто = автопроверки нет).
 	var tasksByLevel [][]store.TaskInput
 	if manual {
 		for lvl := 1; lvl <= n; lvl++ {
 			var row []store.TaskInput
 			for i := 1; i <= n; i++ {
-				row = append(row, store.TaskInput{ChapterID: -(lvl*1000 + i), URL: ""})
+				stmt := strings.TrimSpace(r.FormValue(fmt.Sprintf("stmt_%d_%d", lvl, i)))
+				ans := strings.TrimSpace(r.FormValue(fmt.Sprintf("ans_%d_%d", lvl, i)))
+				f.ManualTasks = append(f.ManualTasks, manualTaskForm{Level: lvl, Ord: i, Statement: stmt, Answer: ans})
+				row = append(row, store.TaskInput{
+					ChapterID: -(lvl*1000 + i), URL: "", Answer: ans, Statement: stmt,
+				})
 			}
 			tasksByLevel = append(tasksByLevel, row)
 		}
-		f.TaskRows = make([]string, n)
 	}
 	seen := map[int]string{}
 	for lvl := 1; manual == false && lvl <= n; lvl++ {
@@ -475,18 +519,30 @@ func (s *Server) handleAdminGameEdit(w http.ResponseWriter, r *http.Request) {
 	for _, l := range levels {
 		f.Levels = append(f.Levels, levelFormFromStore(l))
 	}
-	rows := make([]string, g.N)
-	if g.Mode != store.ModeManual {
+	// tasks отсортированы по (level, ord). Для informatics собираем ссылки
+	// в текстарии по уровням; для manual — сетку задач (условие + ответ).
+	if g.Mode == store.ModeManual {
 		for _, t := range tasks {
-			if t.Level >= 1 && t.Level <= g.N {
-				if rows[t.Level-1] != "" {
-					rows[t.Level-1] += "\n"
-				}
-				rows[t.Level-1] += t.URL
+			if t.Level < 1 || t.Level > g.N {
+				continue
 			}
+			f.ManualTasks = append(f.ManualTasks, manualTaskForm{
+				Level: t.Level, Ord: t.Ord, Statement: t.Statement, Answer: t.Answer,
+			})
 		}
+	} else {
+		rows := make([]string, g.N)
+		for _, t := range tasks {
+			if t.Level < 1 || t.Level > g.N {
+				continue
+			}
+			if t.Ord > 1 {
+				rows[t.Level-1] += "\n"
+			}
+			rows[t.Level-1] += t.URL
+		}
+		f.TaskRows = rows
 	}
-	f.TaskRows = rows
 	for _, t := range teams {
 		f.Teams = append(f.Teams, teamForm{ID: strconv.FormatInt(t.ID, 10), Name: t.Name,
 			UserID: strconv.Itoa(t.InformaticsUserID), Login: t.Login, Password: t.Password})

@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS game_tasks (
 	ord INTEGER NOT NULL,
 	chapter_id INTEGER NOT NULL,
 	url TEXT NOT NULL,
+	answer TEXT NOT NULL DEFAULT '',
+	statement TEXT NOT NULL DEFAULT '',
 	UNIQUE (game_id, chapter_id)
 );
 
@@ -124,6 +126,18 @@ func Open(path string) (*Store, error) {
 		!strings.Contains(err.Error(), "duplicate column") {
 		db.Close()
 		return nil, fmt.Errorf("миграция mode: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE game_tasks ADD COLUMN answer TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("миграция answer: %w", err)
+	}
+	// statement — условие задачи математического режима (ссылка или текст),
+	// показывается команде после покупки.
+	if _, err := db.Exec(`ALTER TABLE game_tasks ADD COLUMN statement TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("миграция statement: %w", err)
 	}
 	return &Store{DB: db, versions: map[int64]int64{}, orderDone: map[int64]bool{}}, nil
 }
@@ -203,6 +217,8 @@ type Task struct {
 	Ord       int
 	ChapterID int
 	URL       string
+	Answer    string // эталонный ответ (математический режим); пусто — нет автопроверки
+	Statement string // условие задачи (математический режим): ссылка или текст
 }
 
 type Team struct {
@@ -287,6 +303,8 @@ func (s *Store) CreateGame(g *Game, levels []Level, tasksByLevel [][]TaskInput, 
 type TaskInput struct {
 	ChapterID int
 	URL       string
+	Answer    string
+	Statement string
 }
 
 type TeamInput struct {
@@ -305,8 +323,8 @@ func insertGameConfig(tx *sql.Tx, gameID int64, levels []Level, tasksByLevel [][
 	}
 	for li, row := range tasksByLevel {
 		for oi, t := range row {
-			if _, err := tx.Exec(`INSERT INTO game_tasks(game_id, level, ord, chapter_id, url) VALUES(?,?,?,?,?)`,
-				gameID, li+1, oi+1, t.ChapterID, t.URL); err != nil {
+			if _, err := tx.Exec(`INSERT INTO game_tasks(game_id, level, ord, chapter_id, url, answer, statement) VALUES(?,?,?,?,?,?,?)`,
+				gameID, li+1, oi+1, t.ChapterID, t.URL, t.Answer, t.Statement); err != nil {
 				return err
 			}
 		}
@@ -381,7 +399,7 @@ func (s *Store) UpdateGameConfig(g *Game, levels []Level, tasksByLevel [][]TaskI
 // совпадает со старой — chapterid/url меняются на месте с сохранением id.
 // Иначе задачи пересоздаются, что допустимо лишь без событий и перестановок.
 func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error {
-	rows, err := tx.Query(`SELECT id, level, ord, chapter_id, url FROM game_tasks
+	rows, err := tx.Query(`SELECT id, level, ord, chapter_id, url, answer, statement FROM game_tasks
 		WHERE game_id=? ORDER BY level, ord`, gameID)
 	if err != nil {
 		return err
@@ -390,7 +408,7 @@ func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error
 	oldCount := 0
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.Level, &t.Ord, &t.ChapterID, &t.URL); err != nil {
+		if err := rows.Scan(&t.ID, &t.Level, &t.Ord, &t.ChapterID, &t.URL, &t.Answer, &t.Statement); err != nil {
 			rows.Close()
 			return err
 		}
@@ -433,8 +451,8 @@ func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error
 		}
 		for li, row := range tasksByLevel {
 			for oi, t := range row {
-				if _, err := tx.Exec(`INSERT INTO game_tasks(game_id, level, ord, chapter_id, url) VALUES(?,?,?,?,?)`,
-					gameID, li+1, oi+1, t.ChapterID, t.URL); err != nil {
+				if _, err := tx.Exec(`INSERT INTO game_tasks(game_id, level, ord, chapter_id, url, answer, statement) VALUES(?,?,?,?,?,?,?)`,
+					gameID, li+1, oi+1, t.ChapterID, t.URL, t.Answer, t.Statement); err != nil {
 					return err
 				}
 			}
@@ -442,19 +460,22 @@ func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error
 		return nil
 	}
 
-	// Структура прежняя: правим на месте. Двухфазно, чтобы обмен chapterid
-	// между позициями не упирался в UNIQUE(game_id, chapter_id).
+	// Структура прежняя: правим на месте. chapterid обновляем двухфазно,
+	// чтобы обмен между позициями не упирался в UNIQUE(game_id, chapter_id);
+	// url, answer и statement ограничений не имеют — их пишем во второй фазе.
 	type change struct {
 		id        int64
 		chapterID int
 		url       string
+		answer    string
+		statement string
 	}
 	var changes []change
 	for li, row := range tasksByLevel {
 		for oi, t := range row {
 			o := old[[2]int{li + 1, oi + 1}]
-			if o.ChapterID != t.ChapterID || o.URL != t.URL {
-				changes = append(changes, change{o.ID, t.ChapterID, t.URL})
+			if o.ChapterID != t.ChapterID || o.URL != t.URL || o.Answer != t.Answer || o.Statement != t.Statement {
+				changes = append(changes, change{o.ID, t.ChapterID, t.URL, t.Answer, t.Statement})
 			}
 		}
 	}
@@ -468,7 +489,8 @@ func updateTasksDiff(tx *sql.Tx, gameID int64, tasksByLevel [][]TaskInput) error
 		}
 	}
 	for _, c := range changes {
-		if _, err := tx.Exec(`UPDATE game_tasks SET chapter_id=?, url=? WHERE id=?`, c.chapterID, c.url, c.id); err != nil {
+		if _, err := tx.Exec(`UPDATE game_tasks SET chapter_id=?, url=?, answer=?, statement=? WHERE id=?`,
+			c.chapterID, c.url, c.answer, c.statement, c.id); err != nil {
 			return err
 		}
 	}
@@ -671,7 +693,7 @@ func (s *Store) GetLevels(gameID int64) ([]Level, error) {
 }
 
 func (s *Store) GetTasks(gameID int64) ([]Task, error) {
-	rows, err := s.DB.Query(`SELECT id, game_id, level, ord, chapter_id, url
+	rows, err := s.DB.Query(`SELECT id, game_id, level, ord, chapter_id, url, answer, statement
 		FROM game_tasks WHERE game_id=? ORDER BY level, ord`, gameID)
 	if err != nil {
 		return nil, err
@@ -680,7 +702,7 @@ func (s *Store) GetTasks(gameID int64) ([]Task, error) {
 	var out []Task
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.GameID, &t.Level, &t.Ord, &t.ChapterID, &t.URL); err != nil {
+		if err := rows.Scan(&t.ID, &t.GameID, &t.Level, &t.Ord, &t.ChapterID, &t.URL, &t.Answer, &t.Statement); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

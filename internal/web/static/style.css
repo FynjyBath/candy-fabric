@@ -185,6 +185,33 @@ form.inline { display: inline; }
 .buy-btn { display: block; margin: 8px auto 0; padding: 3px 12px; font-size: 0.85rem; }
 .buy-btn:disabled { background: #cfc4b5; box-shadow: none; cursor: wait; }
 
+/* Условие математической задачи текстом (в ячейке своей таблицы) */
+.cell-statement {
+	margin-top: 6px; padding: 6px 8px; max-width: 22em;
+	background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+	font-size: 0.85rem; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* Форма ответа (математический режим) */
+.answer-form { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 8px; justify-content: center; }
+.answer-input { width: 8em; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 0.85rem; }
+.answer-form button { padding: 3px 10px; font-size: 0.85rem; }
+.answer-form button:disabled { background: #cfc4b5; box-shadow: none; cursor: wait; }
+.answer-msg { width: 100%; text-align: center; font-size: 0.85rem; font-weight: 600; }
+.answer-msg.right { color: var(--mint-dark); }
+.answer-msg.wrong { color: #c0392b; animation: answer-shake 0.4s; }
+@keyframes answer-shake {
+	0%, 100% { transform: translateX(0); }
+	25% { transform: translateX(-4px); }
+	75% { transform: translateX(4px); }
+}
+
+/* Сетка задач математического режима в форме */
+.manual-level { margin: 8px 0; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.manual-task { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+.manual-task-label { min-width: 5em; padding-top: 4px; color: var(--ink-soft); font-size: 0.9rem; }
+.manual-task textarea { flex: 1; min-width: 260px; }
+
 details form { margin: 6px 0; display: flex; flex-direction: column; gap: 4px; }
 details form label { font-size: 0.9rem; }
 details summary { cursor: pointer; }
