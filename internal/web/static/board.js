@@ -99,35 +99,35 @@ function initBoard(opts) {
 	// Разлёт конфет из точки (координаты страницы) — при решении задачи.
 	function candyBurst(x, y) {
 		if (reducedMotion) return;
-		for (let i = 0; i < 12; i++) {
+		for (let i = 0; i < 16; i++) {
 			const p = document.createElement("span");
 			p.className = "candy-pop";
 			p.textContent = CANDY_GLYPHS[i % CANDY_GLYPHS.length];
 			const ang = Math.random() * 2 * Math.PI;
-			const dist = 60 + Math.random() * 90;
+			const dist = 70 + Math.random() * 120;
 			p.style.left = x + "px";
 			p.style.top = y + "px";
 			p.style.setProperty("--dx", Math.cos(ang) * dist + "px");
-			p.style.setProperty("--dy", (Math.sin(ang) * dist - 50) + "px");
+			p.style.setProperty("--dy", (Math.sin(ang) * dist - 60) + "px");
 			p.style.setProperty("--rot", (Math.random() * 720 - 360) + "deg");
 			document.body.appendChild(p);
-			setTimeout(() => p.remove(), 1300);
+			setTimeout(() => p.remove(), 2300);
 		}
 	}
 
 	// Финальный дождь из конфет — один раз при завершении игры.
 	function candyRain() {
 		if (reducedMotion) return;
-		for (let i = 0; i < 40; i++) {
+		for (let i = 0; i < 60; i++) {
 			const p = document.createElement("span");
 			p.className = "candy-rain";
 			p.textContent = CANDY_GLYPHS[i % CANDY_GLYPHS.length];
 			p.style.left = Math.random() * 100 + "vw";
 			p.style.setProperty("--rot", (Math.random() * 720 - 360) + "deg");
-			p.style.animationDuration = (2.5 + Math.random() * 2) + "s";
-			p.style.animationDelay = (Math.random() * 1.5) + "s";
+			p.style.animationDuration = (3.5 + Math.random() * 2.5) + "s";
+			p.style.animationDelay = (Math.random() * 2.5) + "s";
 			document.body.appendChild(p);
-			setTimeout(() => p.remove(), 6500);
+			setTimeout(() => p.remove(), 9500);
 		}
 	}
 
@@ -210,10 +210,35 @@ function initBoard(opts) {
 		setTimeout(() => ov.remove(), 9000);
 	}
 
-	// Звуки: решение задачи и финиш игры. Браузер блокирует звук до первого
-	// клика по странице — play() тогда молча откажет, это нормально.
+	// Звуки: решение задачи и финиш игры. Файлы предзагружаются, иначе первый
+	// play() тянул бы и декодировал mp3 с заметной задержкой. Браузер к тому
+	// же блокирует звук до первого взаимодействия — «прогреваем» и
+	// разблокируем его на первом клике/нажатии, чтобы к моменту события звук
+	// играл мгновенно.
 	const sndSolve = new Audio("/static/game-won.mp3");
 	const sndFinish = new Audio("/static/pvz-victory.mp3");
+	for (const snd of [sndSolve, sndFinish]) {
+		snd.preload = "auto";
+		snd.load();
+	}
+	let audioPrimed = false;
+	function primeAudio() {
+		if (audioPrimed) return;
+		audioPrimed = true;
+		for (const snd of [sndSolve, sndFinish]) {
+			const v = snd.volume;
+			snd.volume = 0;
+			snd.play().then(() => {
+				snd.pause();
+				snd.currentTime = 0;
+				snd.volume = v;
+			}).catch(() => { snd.volume = v; });
+		}
+	}
+	// Разблокировка на первом взаимодействии (клик по странице / любая клавиша).
+	window.addEventListener("pointerdown", primeAudio, { once: true });
+	window.addEventListener("keydown", primeAudio, { once: true });
+
 	function playSound(snd) {
 		try {
 			snd.currentTime = 0;

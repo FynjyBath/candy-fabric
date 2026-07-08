@@ -256,12 +256,12 @@ details summary { cursor: pointer; }
 /* Конфетти при решении задачи */
 .candy-pop {
 	position: absolute; z-index: 50; pointer-events: none;
-	font-size: 19px; line-height: 1;
-	animation: candy-pop 1.2s ease-out forwards;
+	font-size: 21px; line-height: 1;
+	animation: candy-pop 2.1s ease-out forwards;
 }
 @keyframes candy-pop {
 	from { transform: translate(0, 0) rotate(0deg); opacity: 1; }
-	70%  { opacity: 1; }
+	80%  { opacity: 1; }
 	to   { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)); opacity: 0; }
 }
 
