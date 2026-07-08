@@ -207,6 +207,57 @@ func TestFetchNewRunsHoldsBackPendingRun(t *testing.T) {
 	}
 }
 
+// Промежуточные вердикты (тестируется / компилируется / ждёт проверки) тоже
+// удерживают водяной знак — иначе их поздний OK не будет выкачан.
+func TestFetchNewRunsHoldsBackTransientVerdicts(t *testing.T) {
+	now := time.Now().UTC()
+	for _, status := range []int{
+		statusRunning, statusCompiling, statusCompiled, statusAvailable,
+		statusPending, statusPendingReview, statusSummoned,
+	} {
+		cache := OpenCache(filepath.Join(t.TempDir(), "state.json"))
+		cache.SetMaxRunID(7, 10)
+		pending := Run{ID: 40, EjudgeStatus: status, ProblemID: 1, CreateTime: now}
+		src := &fakeSource{pages: map[int][][]Run{7: {{pending}}}}
+		_, newMax, err := FetchNewRuns(src, cache, 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if newMax != 39 {
+			t.Errorf("статус %d: newMax = %d, ожидалось 39 (промежуточный вердикт удерживает знак)", status, newMax)
+		}
+	}
+	// Терминальные вердикты (WA/CE/…) знак не удерживают.
+	for _, status := range []int{0, 1, 2, 3, 5, 8, 17} {
+		cache := OpenCache(filepath.Join(t.TempDir(), "state.json"))
+		cache.SetMaxRunID(7, 10)
+		r := Run{ID: 40, EjudgeStatus: status, ProblemID: 1, CreateTime: now}
+		src := &fakeSource{pages: map[int][][]Run{7: {{r}}}}
+		_, newMax, err := FetchNewRuns(src, cache, 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if newMax != 40 {
+			t.Errorf("терминальный статус %d: newMax = %d, ожидалось 40 (не удерживает)", status, newMax)
+		}
+	}
+}
+
+func TestRunPending(t *testing.T) {
+	pending := []int{-1, 11, 16, 23, 96, 97, 98, 99}
+	terminal := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 17, 18}
+	for _, s := range pending {
+		if !(&Run{EjudgeStatus: s}).Pending() {
+			t.Errorf("статус %d должен быть промежуточным", s)
+		}
+	}
+	for _, s := range terminal {
+		if (&Run{EjudgeStatus: s}).Pending() {
+			t.Errorf("статус %d должен быть терминальным", s)
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	pageDelay = time.Millisecond // не замедлять тесты постраничной паузой
 	m.Run()

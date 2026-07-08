@@ -56,8 +56,33 @@ type Run struct {
 	ProblemID    int
 }
 
-// Solved — решённая посылка: ejudge_status ∈ {0, 8} (OK, ACCEPTED).
+// Solved — решённая посылка: ejudge_status ∈ {0, 8} (OK, «Зачтено»).
 func (r *Run) Solved() bool { return r.EjudgeStatus == 0 || r.EjudgeStatus == 8 }
+
+// Нетерминальные (промежуточные) статусы ejudge: посылка ещё компилируется /
+// тестируется / стоит в очереди / ждёт ручной проверки — её вердикт изменится.
+// Всё остальное — терминальный вердикт (не изменится). Коды из ejudge runlog.h.
+const (
+	statusNoValue       = -1 // ejudge_status null/пусто: ещё не оценена
+	statusPending       = 11 // ждёт проверки
+	statusPendingReview = 16 // ждёт ревью
+	statusSummoned      = 23 // вызван на защиту
+	statusRunning       = 96 // идёт тестирование
+	statusCompiled      = 97
+	statusCompiling     = 98
+	statusAvailable     = 99
+)
+
+// Pending — вердикт ещё не окончательный (посылка изменит статус). Такие
+// посылки нельзя пропускать водяным знаком: их поздний OK нужно дождаться.
+func (r *Run) Pending() bool {
+	switch r.EjudgeStatus {
+	case statusNoValue, statusPending, statusPendingReview, statusSummoned,
+		statusRunning, statusCompiled, statusCompiling, statusAvailable:
+		return true
+	}
+	return false
+}
 
 // Client — HTTP-клиент информатикса: Moodle-логин + API посылок.
 type Client struct {
