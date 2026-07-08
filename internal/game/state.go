@@ -21,8 +21,9 @@ const (
 
 // TaskState — состояние пары (команда, задача).
 type TaskState struct {
-	State string
-	Tests int
+	State    string
+	Tests    int
+	SolvedAt time.Time // время события solve (нулевое, если задача не решена)
 }
 
 // TeamState — результат расчёта для одной команды.
@@ -197,6 +198,7 @@ func applyEvent(res *Result, ts *TeamState, e *store.Event, taskByID map[int64]s
 		ts.Amount += lvl.AmountBonus
 		ts.Speed += lvl.SpeedBonus + lvl.Load
 		st.State = StatePassed
+		st.SolvedAt = e.At
 	default:
 		warn("неизвестный тип события " + e.Type)
 	}

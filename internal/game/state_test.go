@@ -86,6 +86,10 @@ func TestBuySolveEffects(t *testing.T) {
 	if st := ts.Tasks[101]; st.State != StatePassed || st.Tests != 1 {
 		t.Errorf("задача 101: %+v, ожидалось passed/1 тест", st)
 	}
+	// Время сдачи = время события solve.
+	if st := ts.Tasks[101]; !st.SolvedAt.Equal(t0.Add(30 * time.Second)) {
+		t.Errorf("SolvedAt = %v, ожидалось %v", st.SolvedAt, t0.Add(30*time.Second))
+	}
 	// Вторая команда не затронута.
 	if res.Teams[2].Amount != 20000+40*15 {
 		t.Errorf("команда 2 amount = %d", res.Teams[2].Amount)

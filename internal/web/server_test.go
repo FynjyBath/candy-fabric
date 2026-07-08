@@ -1807,6 +1807,65 @@ func TestManualModeEdit(t *testing.T) {
 	}
 }
 
+// Время сдачи задачи (минуты от старта) отдаётся в состоянии всем и видно
+// в публичном табло.
+func TestSolvedMinInState(t *testing.T) {
+	ts, st, _ := testServer(t)
+	c, csrf := adminClient(t, ts)
+	gameID := createGame(t, ts, c, csrf)
+
+	start := time.Now().UTC().Truncate(time.Second).Add(-40 * time.Minute)
+	if err := st.SetGameStartAt(gameID, &start); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureTaskOrder(gameID); err != nil {
+		t.Fatal(err)
+	}
+	teams, _ := st.GetTeams(gameID)
+	order, _ := st.GetTaskOrder(teams[0].ID)
+	taskID := order[1]
+	// Покупка на 5-й, решение на 23-й минуте от старта.
+	st.AddEvent(&store.Event{GameID: gameID, TeamID: teams[0].ID, TaskID: &taskID,
+		Type: "buy_task", At: start.Add(5 * time.Minute), Source: "manual", Enabled: true})
+	st.AddEvent(&store.Event{GameID: gameID, TeamID: teams[0].ID, TaskID: &taskID,
+		Type: "solve", At: start.Add(23 * time.Minute), Source: "manual", Enabled: true})
+
+	var pub struct {
+		Teams []struct {
+			ID    int64 `json:"id"`
+			Cells []struct {
+				Cell      int    `json:"cell"`
+				State     string `json:"state"`
+				SolvedMin *int   `json:"solved_min"`
+			} `json:"cells"`
+		} `json:"teams"`
+	}
+	// Публичное состояние (без авторизации) содержит время сдачи.
+	getJSON(t, http.DefaultClient, fmt.Sprintf("%s/api/g/%d/state", ts.URL, gameID), &pub)
+	found := false
+	for _, tm := range pub.Teams {
+		if tm.ID != teams[0].ID {
+			continue
+		}
+		for _, cell := range tm.Cells {
+			if cell.Cell == 1 {
+				if cell.State != "passed" {
+					t.Fatalf("ячейка 1 состояние %q, ожидалось passed", cell.State)
+				}
+				if cell.SolvedMin == nil || *cell.SolvedMin != 23 {
+					t.Errorf("solved_min = %v, ожидалось 23", cell.SolvedMin)
+				}
+				found = true
+			} else if cell.SolvedMin != nil {
+				t.Errorf("у нерешённой ячейки %d есть solved_min=%v", cell.Cell, *cell.SolvedMin)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ячейка 1 не найдена")
+	}
+}
+
 // Неизвестные id — 404.
 func TestNotFound(t *testing.T) {
 	ts, _, _ := testServer(t)

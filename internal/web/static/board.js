@@ -37,19 +37,29 @@ function initBoard(opts) {
 
 	function num(x) { return x == null ? "?" : x.toLocaleString("ru-RU"); }
 
+	// Время сдачи от старта: минуты → «Ч:ММ».
+	function fmtSolved(min) {
+		const h = Math.floor(min / 60);
+		const m = min % 60;
+		return h + ":" + String(m).padStart(2, "0");
+	}
+
 	function cellDiv(cell, opts2) {
 		const div = document.createElement("div");
 		div.className = "cell " + cell.state;
+		const num = document.createElement("span");
+		num.className = "cell-num";
 		if (opts2 && opts2.link && cell.url) {
 			const a = document.createElement("a");
 			a.href = cell.url;
 			a.target = "_blank";
 			a.rel = "noopener";
 			a.textContent = cell.cell;
-			div.appendChild(a);
+			num.appendChild(a);
 		} else {
-			div.textContent = cell.cell;
+			num.textContent = cell.cell;
 		}
+		div.appendChild(num);
 		if (cell.tests > 0 && cell.state === "bought") {
 			const b = document.createElement("span");
 			b.className = "tests-badge";
@@ -61,6 +71,14 @@ function initBoard(opts) {
 			b.className = "solved-badge";
 			b.textContent = "✓";
 			div.appendChild(b);
+			// Подпись времени сдачи (минуты от старта, «Ч:ММ»).
+			if (cell.solved_min != null) {
+				const t = document.createElement("span");
+				t.className = "solved-time";
+				t.textContent = fmtSolved(cell.solved_min);
+				t.title = "сдано на " + fmtSolved(cell.solved_min) + " от старта";
+				div.appendChild(t);
+			}
 		}
 		return div;
 	}

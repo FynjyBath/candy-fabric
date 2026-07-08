@@ -117,13 +117,18 @@ form.inline { display: inline; }
 .grid { display: grid; gap: 10px 6px; padding-top: 8px; }
 .cell {
 	position: relative;
-	display: flex; align-items: center; justify-content: center;
+	display: flex; flex-direction: column; align-items: center; justify-content: center;
 	min-width: 46px; min-height: 40px; padding: 2px 8px;
 	font-weight: 700;
 	color: #6d6459;
 	background: #ddd8d1;
 	border: 1px solid rgba(74,44,23,0.12);
 	border-radius: 8px;
+	line-height: 1.05;
+}
+.cell .solved-time {
+	font-size: 0.62rem; font-weight: 700; opacity: 0.85;
+	font-variant-numeric: tabular-nums; margin-top: 1px;
 }
 .cell.hidden { background: #ddd8d1; }
 .cell.bought { background: var(--caramel); color: var(--caramel-dark); }

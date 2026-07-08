@@ -145,6 +145,10 @@ type cellJSON struct {
 	Ord       int    `json:"ord,omitempty"`        // позиция в уровне (для ручного режима)
 	HasAnswer bool   `json:"has_answer,omitempty"` // задан эталонный ответ (автопроверка)
 	Statement string `json:"statement,omitempty"`  // условие задачи текстом (математический режим)
+	// Время сдачи решённой задачи от старта игры, в минутах (для всех).
+	// -1 = не решена. 0 может быть валидным (решена на 0-й минуте), поэтому
+	// omitempty не используем, а не-решённые помечаем через указатель.
+	SolvedMin *int `json:"solved_min,omitempty"`
 }
 
 // buildState собирает JSON состояния. include: "public" — без ссылок вообще;
@@ -183,6 +187,15 @@ func (s *Server) buildState(snap *gameSnapshot, include string, forTeamID int64)
 				if st := ts.Tasks[taskID]; st != nil {
 					cj.State = st.State
 					cj.Tests = st.Tests
+					// Минута сдачи от старта — видна всем (это не идентифицирует
+					// задачу, только время). Округление вниз до минуты.
+					if st.State == game.StatePassed && g.StartAt != nil && !st.SolvedAt.IsZero() {
+						m := int(st.SolvedAt.Sub(*g.StartAt).Minutes())
+						if m < 0 {
+							m = 0
+						}
+						cj.SolvedMin = &m
+					}
 				}
 				// Команда видит ссылку (и вообще какую-либо идентификацию
 				// задачи, включая chapterid) только после покупки: до этого
