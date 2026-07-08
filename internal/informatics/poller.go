@@ -26,16 +26,31 @@ type Poller struct {
 	lastError   string
 	lastErrAt   time.Time
 	cycleHadErr bool
+	lastPollAt  time.Time // время последнего завершённого цикла
+	lastSolves  int       // засчитано решений в последнем цикле
+	totalSolves int       // засчитано решений за всё время работы
 }
 
 // FinishedGrace — сколько опрашивать после конца игры (посылки «на флажке»).
 const FinishedGrace = 15 * time.Minute
+
+// pendingRepoll — если в цикле были ещё не оценённые посылки, следующий цикл
+// делаем раньше: их OK нужно поймать без ожидания полного интервала.
+const pendingRepoll = 12 * time.Second
 
 // LastError — последняя ошибка опросчика для баннера в админке.
 func (p *Poller) LastError() (string, time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.lastError, p.lastErrAt
+}
+
+// Status — диагностика опросчика для админки: время последнего цикла и
+// сколько решений засчитано (в последнем цикле и всего).
+func (p *Poller) Status() (lastPollAt time.Time, lastSolves, totalSolves int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastPollAt, p.lastSolves, p.totalSolves
 }
 
 func (p *Poller) setError(err error) {
@@ -59,7 +74,9 @@ func (p *Poller) finishCycle() {
 	p.mu.Unlock()
 }
 
-// Run запускает цикл опроса до отмены контекста.
+// Run запускает цикл опроса до отмены контекста. Если в цикле были ещё не
+// оценённые посылки, следующий цикл делается раньше (pendingRepoll), чтобы их
+// поздний OK засчитывался быстрее.
 func (p *Poller) Run(ctx context.Context) {
 	interval := p.PollInterval
 	if interval <= 0 {
@@ -69,25 +86,29 @@ func (p *Poller) Run(ctx context.Context) {
 	if pause < time.Second {
 		pause = time.Second
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
-		p.pollOnce(ctx, pause)
+		sawPending := p.pollOnce(ctx, pause)
 		p.finishCycle()
+		next := interval
+		if sawPending && pendingRepoll < next {
+			next = pendingRepoll
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(next):
 		}
 	}
 }
 
 // pollOnce — один цикл обхода. Ошибка одного аккаунта не прерывает остальные.
-func (p *Poller) pollOnce(ctx context.Context, pause time.Duration) {
+// Возвращает sawPending: были ли посылки с ещё не окончательным вердиктом
+// (тогда следующий цикл делается раньше).
+func (p *Poller) pollOnce(ctx context.Context, pause time.Duration) (sawPending bool) {
 	games, err := p.activeGames()
 	if err != nil {
 		p.setError(fmt.Errorf("список активных игр: %w", err))
-		return
+		return false
 	}
 	// Аккаунт может участвовать в нескольких играх — собираем множество.
 	type gameTeam struct {
@@ -106,17 +127,18 @@ func (p *Poller) pollOnce(ctx context.Context, pause time.Duration) {
 		}
 	}
 	if len(accounts) == 0 {
-		return
+		return false
 	}
+	solves, newRuns := 0, 0
 	first := true
 	for userID, gts := range accounts {
 		if ctx.Err() != nil {
-			return
+			return sawPending
 		}
 		if !first {
 			select {
 			case <-ctx.Done():
-				return
+				return sawPending
 			case <-time.After(pause):
 			}
 		}
@@ -126,16 +148,22 @@ func (p *Poller) pollOnce(ctx context.Context, pause time.Duration) {
 			p.setError(fmt.Errorf("аккаунт %d: %w", userID, err))
 			continue // один упавший аккаунт не прерывает обход
 		}
+		newRuns += len(runs)
 		matchedOK := true
 		for _, r := range runs {
+			if r.Pending() {
+				sawPending = true // ещё тестируется — переопросим раньше
+			}
 			if !r.Solved() {
 				continue // остальные вердикты — просто попытки, не учитываются
 			}
 			for _, gt := range gts {
-				if err := p.matchRun(gt.g, gt.team, r); err != nil {
+				n, err := p.matchRun(gt.g, gt.team, r)
+				if err != nil {
 					matchedOK = false
 					p.setError(fmt.Errorf("матчинг посылки %d (игра %d): %w", r.ID, gt.g.ID, err))
 				}
+				solves += n
 			}
 		}
 		// Водяной знак двигаем только после успешной обработки: при сбое
@@ -146,6 +174,20 @@ func (p *Poller) pollOnce(ctx context.Context, pause time.Duration) {
 			}
 		}
 	}
+	p.mu.Lock()
+	p.lastPollAt = time.Now()
+	p.lastSolves = solves
+	p.totalSolves += solves
+	p.mu.Unlock()
+	if newRuns > 0 || solves > 0 {
+		note := ""
+		if sawPending {
+			note = ", есть ещё не оценённые (переопрос раньше)"
+		}
+		p.Logger.Printf("INFO опросчик: аккаунтов %d, новых посылок %d, засчитано решений %d%s",
+			len(accounts), newRuns, solves, note)
+	}
+	return sawPending
 }
 
 // activeGames — игры в статусе running плюс finished менее 15 минут назад.
@@ -176,10 +218,11 @@ func (p *Poller) activeGames() ([]*store.Game, error) {
 
 // matchRun матчит решённую посылку в конкретной игре (7.5 п.3–4):
 // по problem.id ищется задача игры, дальше — событие solve или аномалия.
-func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) error {
+// Возвращает 1, если создано событие solve, иначе 0.
+func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) (int, error) {
 	tasks, err := p.Store.GetTasks(g.ID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var task *store.Task
 	for i := range tasks {
@@ -189,19 +232,19 @@ func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) error {
 		}
 	}
 	if task == nil {
-		return nil // посылка по чужой задаче — игнорировать молча
+		return 0, nil // посылка по чужой задаче — игнорировать молча
 	}
 	// Дедупликация: запись с тем же run_id (событие или аномалия) — пропустить.
 	if has, err := p.Store.HasRunRecord(g.ID, r.ID); err != nil {
-		return err
+		return 0, err
 	} else if has {
-		return nil
+		return 0, nil
 	}
 	// Уже есть включённое solve по паре (команда, задача) — пропустить.
 	if has, err := p.Store.HasEnabledSolve(g.ID, team.ID, task.ID); err != nil {
-		return err
+		return 0, err
 	} else if has {
-		return nil
+		return 0, nil
 	}
 
 	tRun := r.CreateTime
@@ -214,7 +257,7 @@ func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) error {
 	} else {
 		events, err := p.Store.GetEvents(g.ID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		switch game.TaskStateAt(events, team.ID, task.ID, tRun) {
 		case game.StateBought:
@@ -232,20 +275,30 @@ func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) error {
 			Type: "solve", At: tRun, Source: "auto", RunID: &runID, Enabled: true,
 		})
 		if err != nil {
-			return err
+			return 0, err
 		}
-		p.Logger.Printf("INFO опросчик: событие solve (игра %d, команда %q, chapterid %d, run %d, %s)",
-			g.ID, team.Name, task.ChapterID, r.ID, tRun.Format(time.RFC3339))
-		return nil
+		p.Logger.Printf("INFO опросчик: засчитано решение (игра %d, команда %q, chapterid %d, run %d, время %s)",
+			g.ID, team.Name, task.ChapterID, r.ID, tRun.Local().Format("02.01 15:04:05"))
+		return 1, nil
 	}
-	err = p.Store.AddAnomaly(&store.Anomaly{
+	// Аномалия видна только в админке; логируем контекст, чтобы причину
+	// (особенно out_of_time — часто это несовпадение времени/пояса) было
+	// сразу видно в логе.
+	extra := ""
+	if reason == "out_of_time" {
+		extra = fmt.Sprintf(", окно игры %s..%s",
+			t0.Local().Format("02.01 15:04:05"), tEnd.Local().Format("15:04:05"))
+	}
+	if !r.TimeParsed {
+		extra += " (create_time не разобрано — взят момент обнаружения)"
+	}
+	if err := p.Store.AddAnomaly(&store.Anomaly{
 		GameID: g.ID, TeamID: team.ID, TaskID: task.ID,
 		RunID: r.ID, RunAt: tRun, Reason: reason,
-	})
-	if err != nil {
-		return err
+	}); err != nil {
+		return 0, err
 	}
-	p.Logger.Printf("WARN опросчик: аномалия %s (игра %d, команда %q, chapterid %d, run %d, %s)",
-		reason, g.ID, team.Name, task.ChapterID, r.ID, tRun.Format(time.RFC3339))
-	return nil
+	p.Logger.Printf("WARN опросчик: аномалия %s (игра %d, команда %q, chapterid %d, run %d, время посылки %s%s)",
+		reason, g.ID, team.Name, task.ChapterID, r.ID, tRun.Local().Format("02.01 15:04:05"), extra)
+	return 0, nil
 }

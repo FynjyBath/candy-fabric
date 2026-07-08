@@ -64,7 +64,7 @@ func TestMatchRunCreatesSolve(t *testing.T) {
 	}
 	p := newPoller(t, st)
 	runAt := start.Add(5 * time.Minute)
-	if err := p.matchRun(g, team, Run{ID: 1001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 1001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	events, _ := st.GetEvents(g.ID)
@@ -81,7 +81,7 @@ func TestMatchRunCreatesSolve(t *testing.T) {
 		t.Errorf("некорректное auto-событие: %+v", solve)
 	}
 	// Повторный матчинг той же посылки — дубль не создаётся.
-	if err := p.matchRun(g, team, Run{ID: 1001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 1001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	events, _ = st.GetEvents(g.ID)
@@ -96,7 +96,7 @@ func TestMatchRunNotBoughtAnomaly(t *testing.T) {
 	g, team, _ := testGame(t, st, start)
 	p := newPoller(t, st)
 	runAt := start.Add(5 * time.Minute)
-	if err := p.matchRun(g, team, Run{ID: 2001, CreateTime: runAt, EjudgeStatus: 8, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 2001, CreateTime: runAt, EjudgeStatus: 8, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	anomalies, _ := st.GetAnomalies(g.ID, true)
@@ -104,7 +104,7 @@ func TestMatchRunNotBoughtAnomaly(t *testing.T) {
 		t.Fatalf("ожидалась аномалия not_bought, получено %+v", anomalies)
 	}
 	// Пока аномалия не решена, опросчик по этой посылке ничего не создаёт.
-	if err := p.matchRun(g, team, Run{ID: 2001, CreateTime: runAt, EjudgeStatus: 8, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 2001, CreateTime: runAt, EjudgeStatus: 8, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	anomalies, _ = st.GetAnomalies(g.ID, false)
@@ -131,7 +131,7 @@ func TestMatchRunSkippedWhenSolveExists(t *testing.T) {
 	st.AddEvent(&store.Event{GameID: g.ID, TeamID: team.ID, TaskID: &taskID, Type: "buy_task", At: start.Add(time.Minute), Source: "manual", Enabled: true})
 	st.AddEvent(&store.Event{GameID: g.ID, TeamID: team.ID, TaskID: &taskID, Type: "solve", At: start.Add(2 * time.Minute), Source: "manual", Enabled: true})
 	p := newPoller(t, st)
-	if err := p.matchRun(g, team, Run{ID: 3001, CreateTime: start.Add(5 * time.Minute), EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 3001, CreateTime: start.Add(5 * time.Minute), EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	anomalies, _ := st.GetAnomalies(g.ID, false)
@@ -149,7 +149,7 @@ func TestMatchRunOutOfTimeAnomaly(t *testing.T) {
 	st.AddEvent(&store.Event{GameID: g.ID, TeamID: team.ID, TaskID: &taskID, Type: "buy_task", At: start.Add(time.Minute), Source: "manual", Enabled: true})
 	p := newPoller(t, st)
 	// Посылка после конца игры (t_end = start + 5100 c).
-	if err := p.matchRun(g, team, Run{ID: 4001, CreateTime: start.Add(2 * time.Hour), EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 4001, CreateTime: start.Add(2 * time.Hour), EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	anomalies, _ := st.GetAnomalies(g.ID, true)
@@ -168,7 +168,7 @@ func TestMatchRunAtFlagCounted(t *testing.T) {
 	st.AddEvent(&store.Event{GameID: g.ID, TeamID: team.ID, TaskID: &taskID, Type: "buy_task", At: start.Add(time.Minute), Source: "manual", Enabled: true})
 	p := newPoller(t, st)
 	runAt := start.Add(84 * time.Minute) // за минуту до конца
-	if err := p.matchRun(g, team, Run{ID: 5001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 5001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	events, _ := st.GetEvents(g.ID)
@@ -193,7 +193,7 @@ func TestDisabledAutoSolveNotRecreated(t *testing.T) {
 	st.AddEvent(&store.Event{GameID: g.ID, TeamID: team.ID, TaskID: &taskID, Type: "buy_task", At: start.Add(time.Minute), Source: "manual", Enabled: true})
 	p := newPoller(t, st)
 	runAt := start.Add(5 * time.Minute)
-	if err := p.matchRun(g, team, Run{ID: 6001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 6001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	events, _ := st.GetEvents(g.ID)
@@ -207,7 +207,7 @@ func TestDisabledAutoSolveNotRecreated(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Опросчик снова видит ту же посылку.
-	if err := p.matchRun(g, team, Run{ID: 6001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 6001, CreateTime: runAt, EjudgeStatus: 0, ProblemID: 111}); err != nil {
 		t.Fatal(err)
 	}
 	events, _ = st.GetEvents(g.ID)
@@ -254,13 +254,36 @@ func TestManualGameNotPolled(t *testing.T) {
 	}
 }
 
+// matchRun возвращает 1 при засчитанном решении и 0 при аномалии/пропуске.
+func TestMatchRunReturnsSolveCount(t *testing.T) {
+	st := openStore(t)
+	start := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Minute)
+	g, team, task := testGame(t, st, start)
+	taskID := task.ID
+	st.AddEvent(&store.Event{GameID: g.ID, TeamID: team.ID, TaskID: &taskID,
+		Type: "buy_task", At: start.Add(time.Minute), Source: "manual", Enabled: true})
+	p := newPoller(t, st)
+	// Куплена → решение засчитано (1).
+	if n, err := p.matchRun(g, team, Run{ID: 8001, CreateTime: start.Add(5 * time.Minute), EjudgeStatus: 0, ProblemID: 111}); err != nil || n != 1 {
+		t.Errorf("solve: n=%d err=%v, ожидалось 1", n, err)
+	}
+	// Чужая задача → 0.
+	if n, _ := p.matchRun(g, team, Run{ID: 8002, CreateTime: start.Add(6 * time.Minute), EjudgeStatus: 0, ProblemID: 99999}); n != 0 {
+		t.Errorf("чужая задача: n=%d, ожидалось 0", n)
+	}
+	// Вне времени → аномалия, 0.
+	if n, _ := p.matchRun(g, team, Run{ID: 8003, CreateTime: start.Add(-time.Hour), EjudgeStatus: 0, ProblemID: 111}); n != 0 {
+		t.Errorf("out_of_time: n=%d, ожидалось 0", n)
+	}
+}
+
 // Посылка по чужой задаче игнорируется молча.
 func TestForeignProblemIgnored(t *testing.T) {
 	st := openStore(t)
 	start := time.Now().UTC().Truncate(time.Second).Add(-10 * time.Minute)
 	g, team, _ := testGame(t, st, start)
 	p := newPoller(t, st)
-	if err := p.matchRun(g, team, Run{ID: 7001, CreateTime: start.Add(time.Minute), EjudgeStatus: 0, ProblemID: 99999}); err != nil {
+	if _, err := p.matchRun(g, team, Run{ID: 7001, CreateTime: start.Add(time.Minute), EjudgeStatus: 0, ProblemID: 99999}); err != nil {
 		t.Fatal(err)
 	}
 	events, _ := st.GetEvents(g.ID)

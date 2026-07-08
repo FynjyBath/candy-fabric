@@ -91,6 +91,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 	// Опросчик: пустые/отсутствующие креды информатикса — фатальная ошибка
 	// старта опросчика, но не веб-сервера (7.1): в админке — баннер.
 	pollerErr := func() (string, time.Time) { return "", time.Time{} }
+	pollerStatus := func() (time.Time, int, int) { return time.Time{}, 0, 0 }
 	informaticsBase := "https://informatics.msk.ru"
 	credsPath := filepath.Join(dataDir, "credentials", "informatics_credentials.json")
 	creds, err := informatics.LoadCredentials(credsPath)
@@ -111,6 +112,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 			AccountPause: time.Second,
 		}
 		pollerErr = poller.LastError
+		pollerStatus = poller.Status
 		go poller.Run(ctx)
 		logger.Printf("INFO опросчик запущен: %s, период %s", creds.BaseURL, pollInterval)
 	}
@@ -123,6 +125,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 		ThemePath:       filepath.Join(dataDir, "theme.txt"),
 		PageRefresh:     pageRefresh,
 		PollerError:     pollerErr,
+		PollerStatus:    pollerStatus,
 		InformaticsBase: informaticsBase,
 	})
 	if err != nil {

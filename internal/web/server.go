@@ -48,6 +48,8 @@ type Server struct {
 
 	// Баннер опросчика: функция возвращает (текст последней ошибки, время).
 	PollerError func() (string, time.Time)
+	// Статус опросчика: время последнего цикла, решений в нём и всего.
+	PollerStatus func() (time.Time, int, int)
 	// Базовый URL информатикса для канонических ссылок.
 	InformaticsBase string
 }
@@ -60,6 +62,7 @@ type Config struct {
 	ThemePath       string // файл с текущим оформлением сайта
 	PageRefresh     time.Duration
 	PollerError     func() (string, time.Time)
+	PollerStatus    func() (time.Time, int, int)
 	InformaticsBase string
 }
 
@@ -119,6 +122,7 @@ func NewServer(cfg Config) (*Server, error) {
 		pageRefresh:     cfg.PageRefresh,
 		cache:           newStateCache(),
 		PollerError:     cfg.PollerError,
+		PollerStatus:    cfg.PollerStatus,
 		InformaticsBase: cfg.InformaticsBase,
 	}
 	if s.themePath != "" {
@@ -134,6 +138,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if s.PollerError == nil {
 		s.PollerError = func() (string, time.Time) { return "", time.Time{} }
+	}
+	if s.PollerStatus == nil {
+		s.PollerStatus = func() (time.Time, int, int) { return time.Time{}, 0, 0 }
 	}
 	funcs := template.FuncMap{
 		"addOne": func(i int) int { return i + 1 },

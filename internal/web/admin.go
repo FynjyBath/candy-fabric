@@ -774,10 +774,13 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 		taskRows = append(taskRows, taskRow{t, taskLabel(t)})
 	}
 	pollerErr, pollerErrAt := s.PollerError()
+	pollAt, pollLast, pollTotal := s.PollerStatus()
+	pollerLive := !pollAt.IsZero() && time.Since(pollAt) < 3*time.Minute
 	if g.Mode == store.ModeManual {
-		// Ручная игра к информатиксу отношения не имеет — баннер ошибок
-		// опросчика на её странице только путает.
+		// Ручная игра к информатиксу отношения не имеет — статус и баннер
+		// опросчика на её странице только путают.
 		pollerErr, pollerErrAt = "", time.Time{}
+		pollAt = time.Time{}
 	}
 	s.render(w, "admin_game.html", map[string]any{
 		"Game":        g,
@@ -792,6 +795,10 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 		"RefreshSec":  s.pageRefresh.Seconds(),
 		"PollerErr":   pollerErr,
 		"PollerErrAt": pollerErrAt,
+		"PollAt":      pollAt,
+		"PollLast":    pollLast,
+		"PollTotal":   pollTotal,
+		"PollerLive":  pollerLive,
 	})
 }
 

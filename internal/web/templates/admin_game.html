@@ -17,6 +17,12 @@
 	Опрос информатикса не работает: <span id="poller-error">{{.PollerErr}}</span>
 	<span id="poller-err-at">{{if .PollerErr}}({{localTime .PollerErrAt}}){{end}}</span>
 </div>
+{{if not .PollAt.IsZero}}
+<p class="hint" id="poller-status">
+	Опросчик: последний опрос {{localTime .PollAt}}{{if not .PollerLive}} <b>(нет свежих опросов — проверьте связь)</b>{{end}};
+	засчитано решений за последний цикл — {{.PollLast}}, всего — {{.PollTotal}}.
+</p>
+{{end}}
 
 <p class="actions">
 	{{if ne .StatusNow "archived"}}
