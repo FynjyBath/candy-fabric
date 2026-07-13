@@ -309,7 +309,12 @@ function initBoard(opts) {
 				const px = ((Date.now() / 1000 % dur) / dur) * 72;
 				stripe.style.backgroundPosition = px.toFixed(2) + "px 0px, 0px 0px";
 			}
-			col.appendChild(stripe);
+			// Конвейер и сетка — единый нижний блок, прижатый к низу карточки:
+			// у всех команд ряда они выровнены, зазор между ними одинаков,
+			// а имя может занимать сколько угодно строк без сдвига конвейера.
+			const bottom = document.createElement("div");
+			bottom.className = "team-bottom";
+			bottom.appendChild(stripe);
 			const grid = document.createElement("div");
 			grid.className = "grid";
 			grid.style.gridTemplateColumns = `repeat(${st.n}, 1fr)`;
@@ -323,7 +328,8 @@ function initBoard(opts) {
 				}
 				grid.appendChild(d);
 			}
-			col.appendChild(grid);
+			bottom.appendChild(grid);
+			col.appendChild(bottom);
 			teamsEl.appendChild(col);
 		}
 

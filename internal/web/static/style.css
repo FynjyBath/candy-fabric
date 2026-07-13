@@ -109,8 +109,11 @@ form.inline { display: inline; }
 .team-col h3 { margin: 4px 0; overflow-wrap: anywhere; }
 .team-col .stats { margin: 4px 0 8px; font-size: 1.05rem; }
 .team-col .stats b { font-variant-numeric: tabular-nums; }
-/* сетка прижата к низу карточки: у карточек одного ряда ячейки на одном уровне */
-.team-col .grid { margin-top: auto; }
+/* Конвейер + сетка — единым блоком прижаты к низу карточки: у карточек одного
+   ряда конвейер и ячейки на одном уровне, зазор между ними одинаков, а длинное
+   имя не сдвигает конвейер относительно сетки. */
+.team-col .team-bottom { margin-top: auto; display: flex; flex-direction: column; }
+.team-col .team-bottom .speed-stripe { margin-bottom: 10px; }
 
 /* Сетка задач: простые ячейки (тема — в цветах). Отступы с запасом под
    бейджи, торчащие над ячейкой, — чтобы не наезжали на соседей. */
