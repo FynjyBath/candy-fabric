@@ -216,6 +216,64 @@ func (p *Poller) activeGames() ([]*store.Game, error) {
 	return out, nil
 }
 
+// CheckGame — разовая проверка одной игры против информатикса, работает в
+// любом статусе (в т. ч. черновик). Для каждой команды выкачивает последние
+// посылки и матчит их (создавая события/аномалии), не трогая водяной знак
+// непрерывного опросчика — чтобы не пересечься с обходом других игр,
+// делящих аккаунт. Позволяет после сохранения конфигурации сразу увидеть уже
+// решённые задачи и аномалии, не дожидаясь старта. Запускать в горутине.
+func (p *Poller) CheckGame(gameID int64) {
+	g, err := p.Store.GetGame(gameID)
+	if err != nil {
+		p.setError(fmt.Errorf("проверка игры %d: %w", gameID, err))
+		return
+	}
+	if g.Mode == store.ModeManual {
+		return // ручной режим — информатикса нет
+	}
+	teams, err := p.Store.GetTeams(gameID)
+	if err != nil {
+		p.setError(fmt.Errorf("проверка игры %d: команды: %w", gameID, err))
+		return
+	}
+	pause := p.AccountPause
+	if pause < time.Second {
+		pause = time.Second
+	}
+	solves, anomalies := 0, 0
+	for i, team := range teams {
+		if team.InformaticsUserID <= 0 {
+			continue
+		}
+		if i > 0 {
+			time.Sleep(pause)
+		}
+		// Страница 1 — новейшие 1000 посылок аккаунта: для аккаунта команды
+		// этого достаточно, чтобы найти уже сделанные решения по задачам игры.
+		runs, _, err := p.Client.FetchRunsPage(team.InformaticsUserID, 1)
+		if err != nil {
+			p.setError(fmt.Errorf("проверка игры %d: аккаунт %d: %w", gameID, team.InformaticsUserID, err))
+			continue
+		}
+		for _, r := range runs {
+			if !r.Solved() {
+				continue
+			}
+			n, err := p.matchRun(g, team, r)
+			if err != nil {
+				p.setError(fmt.Errorf("проверка игры %d: матчинг посылки %d: %w", gameID, r.ID, err))
+				continue
+			}
+			solves += n
+			if n == 0 {
+				anomalies++ // matchRun по решённой посылке без solve = аномалия/пропуск
+			}
+		}
+	}
+	p.Logger.Printf("INFO проверка игры %d завершена: засчитано решений %d, отмечено записей-аномалий %d",
+		gameID, solves, anomalies)
+}
+
 // matchRun матчит решённую посылку в конкретной игре (7.5 п.3–4):
 // по problem.id ищется задача игры, дальше — событие solve или аномалия.
 // Возвращает 1, если создано событие solve, иначе 0.
@@ -248,11 +306,13 @@ func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) (int, error) {
 	}
 
 	tRun := r.CreateTime
-	t0 := *g.StartAt // активная игра всегда имеет start_at
-	tEnd := *g.EndAt()
 
 	reason := ""
-	if tRun.Before(t0) || tRun.After(tEnd) {
+	if g.StartAt == nil {
+		// Игра ещё не стартовала (проверка конфигурации): любое решение —
+		// вне окна игры. Так организатор до старта видит уже решённые задачи.
+		reason = "out_of_time"
+	} else if t0, tEnd := *g.StartAt, *g.EndAt(); tRun.Before(t0) || tRun.After(tEnd) {
 		reason = "out_of_time"
 	} else {
 		events, err := p.Store.GetEvents(g.ID)
@@ -286,8 +346,12 @@ func (p *Poller) matchRun(g *store.Game, team store.Team, r Run) (int, error) {
 	// сразу видно в логе.
 	extra := ""
 	if reason == "out_of_time" {
-		extra = fmt.Sprintf(", окно игры %s..%s",
-			t0.Local().Format("02.01 15:04:05"), tEnd.Local().Format("15:04:05"))
+		if g.StartAt == nil {
+			extra = ", игра ещё не стартовала (проверка конфигурации)"
+		} else {
+			extra = fmt.Sprintf(", окно игры %s..%s",
+				g.StartAt.Local().Format("02.01 15:04:05"), g.EndAt().Local().Format("15:04:05"))
+		}
 	}
 	if !r.TimeParsed {
 		extra += " (create_time не разобрано — взят момент обнаружения)"

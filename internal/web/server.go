@@ -50,6 +50,8 @@ type Server struct {
 	PollerError func() (string, time.Time)
 	// Статус опросчика: время последнего цикла, решений в нём и всего.
 	PollerStatus func() (time.Time, int, int)
+	// CheckGame — разовая проверка игры против информатикса (в горутине).
+	CheckGame func(gameID int64)
 	// Базовый URL информатикса для канонических ссылок.
 	InformaticsBase string
 }
@@ -63,6 +65,7 @@ type Config struct {
 	PageRefresh     time.Duration
 	PollerError     func() (string, time.Time)
 	PollerStatus    func() (time.Time, int, int)
+	CheckGame       func(gameID int64)
 	InformaticsBase string
 }
 
@@ -123,6 +126,7 @@ func NewServer(cfg Config) (*Server, error) {
 		cache:           newStateCache(),
 		PollerError:     cfg.PollerError,
 		PollerStatus:    cfg.PollerStatus,
+		CheckGame:       cfg.CheckGame,
 		InformaticsBase: cfg.InformaticsBase,
 	}
 	if s.themePath != "" {
@@ -141,6 +145,9 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if s.PollerStatus == nil {
 		s.PollerStatus = func() (time.Time, int, int) { return time.Time{}, 0, 0 }
+	}
+	if s.CheckGame == nil {
+		s.CheckGame = func(int64) {}
 	}
 	funcs := template.FuncMap{
 		"addOne": func(i int) int { return i + 1 },

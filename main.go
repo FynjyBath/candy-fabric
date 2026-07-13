@@ -92,6 +92,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 	// старта опросчика, но не веб-сервера (7.1): в админке — баннер.
 	pollerErr := func() (string, time.Time) { return "", time.Time{} }
 	pollerStatus := func() (time.Time, int, int) { return time.Time{}, 0, 0 }
+	checkGame := func(int64) {} // опросчик не запущен — проверка недоступна
 	informaticsBase := "https://informatics.msk.ru"
 	credsPath := filepath.Join(dataDir, "credentials", "informatics_credentials.json")
 	creds, err := informatics.LoadCredentials(credsPath)
@@ -113,6 +114,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 		}
 		pollerErr = poller.LastError
 		pollerStatus = poller.Status
+		checkGame = poller.CheckGame
 		go poller.Run(ctx)
 		logger.Printf("INFO опросчик запущен: %s, период %s", creds.BaseURL, pollInterval)
 	}
@@ -126,6 +128,7 @@ func run(listen, dataDir string, pollInterval, pageRefresh time.Duration) error 
 		PageRefresh:     pageRefresh,
 		PollerError:     pollerErr,
 		PollerStatus:    pollerStatus,
+		CheckGame:       func(id int64) { go checkGame(id) },
 		InformaticsBase: informaticsBase,
 	})
 	if err != nil {

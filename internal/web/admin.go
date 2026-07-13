@@ -28,6 +28,7 @@ func (s *Server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/g/{gameId}/extend", s.adminGate(s.handleAdminExtend))
 	mux.HandleFunc("POST /admin/g/{gameId}/delay-start", s.adminGate(s.handleAdminDelayStart))
 	mux.HandleFunc("POST /admin/g/{gameId}/archive", s.adminGate(s.handleAdminArchive))
+	mux.HandleFunc("POST /admin/g/{gameId}/check", s.adminGate(s.handleAdminCheck))
 	mux.HandleFunc("POST /admin/g/{gameId}/event", s.adminGate(s.handleAdminEventAdd))
 	mux.HandleFunc("POST /admin/g/{gameId}/event/{eventId}/update", s.adminGate(s.handleAdminEventUpdate))
 	mux.HandleFunc("POST /admin/g/{gameId}/event/{eventId}/delete", s.adminGate(s.handleAdminEventDelete))
@@ -480,7 +481,12 @@ func (s *Server) handleAdminGameCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Printf("INFO admin: создана игра %d %q", id, g.Title)
-	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d", id), http.StatusSeeOther)
+	// После сохранения конфигурации сразу проверяем на информатиксе, не
+	// решены ли уже задачи командами (аномалии появятся в течение минуты).
+	if g.Mode != store.ModeManual {
+		s.CheckGame(id)
+	}
+	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d?checked=1", id), http.StatusSeeOther)
 }
 
 // editableGame возвращает игру, доступную для редактирования (все, кроме
@@ -593,7 +599,10 @@ func (s *Server) handleAdminGameEditSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.logger.Printf("INFO admin: изменена конфигурация игры %d %q", g.ID, ng.Title)
-	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d", g.ID), http.StatusSeeOther)
+	if ng.Mode != store.ModeManual {
+		s.CheckGame(g.ID)
+	}
+	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d?checked=1", g.ID), http.StatusSeeOther)
 }
 
 // ---------- Жизненный цикл ----------
@@ -688,6 +697,22 @@ func (s *Server) handleAdminArchive(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Printf("INFO admin: игра %d отправлена в архив", g.ID)
 	http.Redirect(w, r, "/admin/games", http.StatusSeeOther)
+}
+
+// handleAdminCheck запускает разовую проверку игры против информатикса —
+// показать уже решённые задачи и аномалии до старта.
+func (s *Server) handleAdminCheck(w http.ResponseWriter, r *http.Request) {
+	g := s.gameFromPath(w, r)
+	if g == nil {
+		return
+	}
+	if g.Mode == store.ModeManual {
+		http.Error(w, "математический режим не связан с информатиксом", http.StatusConflict)
+		return
+	}
+	s.CheckGame(g.ID)
+	s.logger.Printf("INFO admin: запущена проверка решений игры %d на информатиксе", g.ID)
+	http.Redirect(w, r, fmt.Sprintf("/admin/g/%d?checked=1", g.ID), http.StatusSeeOther)
 }
 
 // ---------- Страница игры ----------
@@ -799,6 +824,7 @@ func (s *Server) handleAdminGame(w http.ResponseWriter, r *http.Request) {
 		"PollLast":    pollLast,
 		"PollTotal":   pollTotal,
 		"PollerLive":  pollerLive,
+		"Checked":     r.URL.Query().Get("checked") == "1" && g.Mode != store.ModeManual,
 	})
 }
 

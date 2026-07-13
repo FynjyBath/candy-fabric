@@ -43,6 +43,13 @@
 		<button type="submit">Продлить (мин)</button>
 	</form>
 	{{end}}
+	{{if ne .Game.Mode "manual"}}
+	<form method="post" action="/admin/g/{{.Game.ID}}/check" class="inline"
+		title="проверить на информатиксе, не решены ли уже задачи командами">
+		<input type="hidden" name="csrf" value="{{.CSRF}}">
+		<button type="submit" class="secondary">Проверить решения</button>
+	</form>
+	{{end}}
 	<form method="post" action="/admin/g/{{.Game.ID}}/archive" class="inline"
 		onsubmit="return confirm('Отправить игру в архив?')">
 		<input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -50,6 +57,10 @@
 	</form>
 	<a class="button secondary" href="/g/{{.Game.ID}}" target="_blank">Публичное табло</a>
 </p>
+{{if .Checked}}
+<p class="hint" id="check-flash">Проверка решений на информатиксе запущена — уже
+решённые задачи и аномалии появятся в течение минуты. Обновите страницу.</p>
+{{end}}
 
 <div id="winner" hidden></div>
 

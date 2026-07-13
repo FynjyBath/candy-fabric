@@ -254,6 +254,66 @@ func TestManualGameNotPolled(t *testing.T) {
 	}
 }
 
+// CheckGame по черновику (игра не стартовала) находит уже решённые командой
+// задачи и помечает их аномалиями out_of_time — до старта игры.
+func TestCheckGameDraftFindsPreSolved(t *testing.T) {
+	st := openStore(t)
+	// Черновик: без start_at. Задача chapterid=111 (её решает sampleRuns).
+	gid, err := st.CreateGame(
+		&store.Game{Title: "Черновик", N: 1, StartAmount: 20000, StartSpeed: 15, DurationSec: 5100},
+		[]store.Level{{Level: 1, TaskCost: 12000, TestCost: 3000, Load: 2, AmountBonus: 12000, SpeedBonus: 4}},
+		[][]store.TaskInput{{{ChapterID: 111, URL: "https://informatics.msk.ru/mod/statements/view.php?chapterid=111"}}},
+		[]store.TeamInput{{Name: "К", InformaticsUserID: 777, Login: "t", Password: "p"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &mockInformatics{runsJSON: sampleRuns} // run 100: problem 111, status 0 (решено)
+	p := newPoller(t, st)
+	p.Client = newMockClient(t, m)
+	p.AccountPause = time.Millisecond
+
+	p.CheckGame(gid)
+
+	anomalies, _ := st.GetAnomalies(gid, true)
+	if len(anomalies) != 1 || anomalies[0].Reason != "out_of_time" {
+		t.Fatalf("ожидалась аномалия out_of_time по пред-решённой задаче, получено %+v", anomalies)
+	}
+	// Событий solve нет (игра не идёт).
+	events, _ := st.GetEvents(gid)
+	if len(events) != 0 {
+		t.Errorf("у черновика не должно быть solve-событий, получено %d", len(events))
+	}
+	// Повторная проверка не дублирует аномалию (дедуп по run_id).
+	p.CheckGame(gid)
+	anomalies, _ = st.GetAnomalies(gid, false)
+	if len(anomalies) != 1 {
+		t.Errorf("повторная проверка продублировала аномалию: %d", len(anomalies))
+	}
+}
+
+// CheckGame ручной игры не обращается к информатиксу (Client не трогается).
+func TestCheckGameManualSkipped(t *testing.T) {
+	st := openStore(t)
+	start := time.Now().UTC()
+	gid, err := st.CreateGame(
+		&store.Game{Title: "Матбой", Mode: store.ModeManual, N: 1,
+			StartAmount: 20000, StartSpeed: 15, DurationSec: 5100, StartAt: &start},
+		[]store.Level{{Level: 1, TaskCost: 1000, TestCost: 500, Load: 1, AmountBonus: 2000, SpeedBonus: 1}},
+		[][]store.TaskInput{{{ChapterID: -1001}}},
+		[]store.TeamInput{{Name: "К", Login: "k", Password: "p"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newPoller(t, st)
+	p.Client = nil // паника, если CheckGame полезет в информатикс
+	p.CheckGame(gid)
+	if a, _ := st.GetAnomalies(gid, false); len(a) != 0 {
+		t.Errorf("ручная игра не должна давать аномалий")
+	}
+}
+
 // matchRun возвращает 1 при засчитанном решении и 0 при аномалии/пропуске.
 func TestMatchRunReturnsSolveCount(t *testing.T) {
 	st := openStore(t)
